@@ -38,7 +38,7 @@
 6.  **Git (可选):** 用于克隆仓库。或者，您可以 以 ZIP 文件形式下载代码。
 7.  **API 密钥和凭证:**
     *   **LLM API:** 您需要一个 OpenAI 兼容服务的 API 密钥和基础 URL（例如 OpenAI, Azure OpenAI, LM Studio, 带 API 服务的 Ollama）。**这是必需的。**
-    *   **有道智云 (可选):** 如果您计划使用有道进行 STT（`STT_PROVIDER=youdao` 或 `both`），请从[有道智云官网](https://ai.youdao.com/)获取您的应用 ID 和应用密钥。
+    *   **有道智云 (可选):** 如果您计划使用有道进行 STT（`STT_PROVIDER=youdao` 或 `both`），请从[有道智云官网](https://ai.youdao.com/)获取您的应用 ID 和应用密钥。使用有道智云的短语音识别。
     *   **Cloudinary (可选):** 如果您计划启用视觉支持并使用 Cloudinary 上传（`VISION_ENABLE=true`, `VISION_UPLOAD_PROVIDER=cloudinary`），请从 [Cloudinary](https://cloudinary.com/) 获取您的 Cloud Name, API Key, 和 API Secret。
 
 ## 后端服务器设置
