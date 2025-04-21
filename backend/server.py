@@ -985,8 +985,8 @@ class LiveAssistantServer:
         final_messages = []
         # insert notepad system message before other system prompts
         final_messages.append(system_notepad_message)
-        final_messages.extend(self.system_prompt_message_for_api)
         final_messages.extend(history_messages)
+        final_messages.extend(self.system_prompt_message_for_api)
 
         # Construct the current user message
         if combined_text_for_turn or (self.enable_vision and image_url):
