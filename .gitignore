@@ -18,6 +18,7 @@ test/
 
 tests/
 
+memory/
 
 tj.py
 config.cfg
