@@ -15,7 +15,7 @@
     'use strict';
 
     // --- 常量定义 ---
-    const API_ENDPOINT = '你的后端地址'; // 后端 API 地址
+    const API_ENDPOINT = 'https://your_server_address:8181/upload'; // 后端 API 地址
     const RECORDING_INTERVAL_MS = 30000; // 30 秒 - 录制分块时长
     const MAX_CHAT_LENGTH = 20; // 每条弹幕消息分段的最大长度
     const CHAT_SEND_DELAY_MIN_MS = 3000; // 发送弹幕消息之间的最小延迟（毫秒）
@@ -1108,20 +1108,31 @@
      * @param {string} message - 要发送的消息字符串。
      * @returns {Promise<void>} 一个 promise，在消息发送时解析，或在错误时拒绝。
      */
+    /**
+     * 在 Bilibili 界面中模拟输入和发送弹幕消息。
+     * @param {string} message - 要发送的消息字符串。
+     * @returns {Promise<void>} 一个 promise，在消息发送时解析，或在错误时拒绝。
+     */
     function sendChatMessage(message) {
         return new Promise((resolve, reject) => {
             if (!message) {
                 return reject(new Error("Cannot send empty message."));
             }
-            // 再次检查权限
             if (!isChatPermissionGranted) {
                 console.warn("Attempted to send chat message, but permission is OFF.");
-                return resolve(); // 静默解析
+                return resolve();
             }
 
-            // 查找弹幕输入框和发送按钮 (这些选择器需要保持最新)
-            const chatInput = document.querySelector('.chat-input-panel textarea.chat-input'); // 输入框选择器
-            const sendButton = document.querySelector('.bl-button.live-skin-highlight-button-bg'); // 发送按钮选择器
+            // 更强兼容性的输入框与按钮选择器
+            const chatInput =
+                document.querySelector('.chat-input-panel textarea.chat-input') ||
+                document.querySelector('textarea.chat-input') ||
+                document.querySelector('textarea');
+
+            const sendButton =
+                document.querySelector('button.bl-button.live-skin-highlight-button-bg') ||
+                document.querySelector('button.bl-button--primary') ||
+                document.querySelector('button');
 
             if (!chatInput) {
                 return reject(new Error("Chat input element not found. Cannot send message."));
@@ -1129,53 +1140,41 @@
             if (!sendButton) {
                 return reject(new Error("Chat send button not found. Cannot send message."));
             }
-            // 检查发送按钮是否禁用
-            if (sendButton.disabled || sendButton.classList.contains('disabled') || sendButton.classList.contains('bl-button--disabled')) { // 添加 B站 可能的禁用类
-                // B站可能有发送冷却，需要等待
+
+            if (sendButton.disabled || sendButton.classList.contains('disabled') || sendButton.classList.contains('bl-button--disabled')) {
                 console.warn("Chat send button is disabled (cooldown?). Will retry queue later.");
-                // 将消息放回队列前面，并稍后重试整个队列处理
                 chatQueue.unshift(message);
-                setTimeout(processChatQueue, getRandomInt(3000, 5000)); // 比如 3-5 秒后重试
-                // 立即 reject 当前 promise，防止继续处理
+                setTimeout(processChatQueue, getRandomInt(3000, 5000));
                 return reject(new Error("Send button disabled, rescheduling queue."));
             }
 
             console.log(`Attempting to send chat: "${message}"`);
 
             try {
-                // 模拟用户输入
                 const inputEvent = new Event('input', { bubbles: true, cancelable: true });
                 const changeEvent = new Event('change', { bubbles: true, cancelable: true });
 
-                chatInput.focus(); // 尝试聚焦输入框
+                chatInput.focus();
                 chatInput.value = message;
                 chatInput.dispatchEvent(inputEvent);
                 chatInput.dispatchEvent(changeEvent);
 
-                // 确保 React/Vue 等框架处理了输入变化
                 setTimeout(() => {
-                    // 再次检查按钮状态
                     if (!sendButton.disabled && !sendButton.classList.contains('disabled') && !sendButton.classList.contains('bl-button--disabled')) {
-                        sendButton.click(); // 点击发送
-                        // 清空输入框（可选，B站通常会自动清空）
-                        // chatInput.value = '';
-                        // chatInput.dispatchEvent(inputEvent);
-                        // chatInput.dispatchEvent(changeEvent);
-                        resolve(); // 成功
+                        sendButton.click();
+                        resolve();
                     } else {
                         console.warn("Send button became disabled just before clicking.");
-                        // 同样地，将消息放回队列并重试
                         chatQueue.unshift(message);
                         setTimeout(processChatQueue, getRandomInt(3000, 5000));
                         reject(new Error("Send button became disabled, rescheduling queue."));
                     }
-                }, 150); // 增加一点延迟
+                }, 150);
 
             } catch (error) {
                 console.error("Error during chat simulation:", error);
-                // 出现意外错误，也考虑重试
                 chatQueue.unshift(message);
-                setTimeout(processChatQueue, getRandomInt(5000, 8000)); // 错误重试间隔长一点
+                setTimeout(processChatQueue, getRandomInt(5000, 8000));
                 reject(error);
             }
         });
