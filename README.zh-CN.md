@@ -64,14 +64,16 @@
 **➡️ 获取详细步骤，请阅读 [完整教程 (TUTORIAL.zh-CN.md)](docs/TUTORIAL.zh-CN.md)**
 
 ## 项目结构
+```
 .
-├── backend/ # 服务器代码及相关文件
-├── frontend/ # 用户脚本代码
-├── docs/ # 文档和图片
-├── README.md # 英文说明
-├── README.zh-CN.md # 本文件 (中文说明)
-├── LICENSE # AGPL-3.0 许可证文件 (你需要创建此文件)
-└── .gitignore # Git 忽略规则
+├── backend/          # 服务器代码及相关文件
+├── frontend/         # 用户脚本代码
+├── docs/             # 文档和图片
+├── README.md         # 英文说明
+├── README.zh-CN.md   # 本文件 (中文说明)
+├── LICENSE           # AGPL-3.0 许可证文件 (你需要创建此文件)
+└── .gitignore        # Git 忽略规则
+```
 
 ## 贡献
 
