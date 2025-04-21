@@ -158,7 +158,7 @@ Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https:/
 
 With the backend running and the userscript installed and configured:
 
-![Control Panel](docs/panel_example.png)
+![Control Panel](panel_example.png)
 
 ### Finding the Control Panel
 
