@@ -21,6 +21,7 @@ tests/
 
 tj.py
 config.cfg
+.env
 
 
 !panel_example.png
