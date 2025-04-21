@@ -66,14 +66,16 @@ It consists of two main parts:
 **➡️ For detailed steps, please read the [Full Tutorial (TUTORIAL.md)](docs/TUTORIAL.md)**
 
 ## Project Structure
+```
 .
-├── backend/ # Server code and related files
-├── frontend/ # Userscript code
-├── docs/ # Documentation and images
-├── README.md # This file (English)
-├── README.zh-CN.md # Chinese Readme
-├── LICENSE # AGPL-3.0 License file (You need to create this)
-└── .gitignore # Git ignore rules
+├── backend/          # Server code and related files
+├── frontend/         # Userscript code
+├── docs/             # Documentation and images
+├── README.md         # This file (English)
+├── README.zh-CN.md   # Chinese Readme
+├── LICENSE           # AGPL-3.0 License file (You need to create this)
+└── .gitignore        # Git ignore rules
+```
 
 ## Contributing
 
