@@ -136,7 +136,7 @@ Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https:/
 
 ### 2. Install the Userscript
 
-*   **From URL (if hosted):** Navigate to the raw `.user.js` file link on GitHub (e.g., `https://github.com/your-username/live-stream-chat-ai-agent/raw/main/frontend/live-stream-chat-ai-agent.user.js`). Your userscript manager should detect and prompt for installation.
+*   **From URL:** `https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent/raw/refs/heads/main/frontend/live-stream-chat-ai-agent.user.js`. Your userscript manager should detect and prompt for installation.
 *   **Manual Installation:**
     1.  Open Tampermonkey/Violentmonkey dashboard.
     2.  Go to the "Utilities" / "+" / "Create a new script" tab.
