@@ -136,7 +136,7 @@ python server.py
 
 ### 2. 安装用户脚本
 
-*   **从 URL 安装 (如果已托管):** 访问 GitHub 上的原始 `.user.js` 文件链接（例如 `https://github.com/your-username/live-stream-chat-ai-agent/raw/main/frontend/live-stream-chat-ai-agent.user.js`）。您的用户脚本管理器应会检测到并提示安装。
+*   **从 URL 安装:** 访问 `https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent/raw/refs/heads/main/frontend/live-stream-chat-ai-agent.user.js`。您的用户脚本管理器应会检测到并提示安装。
 *   **手动安装:**
     1.  打开 Tampermonkey/Violentmonkey 仪表盘。
     2.  转到“实用工具” / “+” / “创建新脚本”选项卡。

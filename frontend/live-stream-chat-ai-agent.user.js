@@ -1,7 +1,6 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @namespace    http://enou.org/
 // @version      0.8
 // @description  An AI script for automatically sending chat messages and interacting with the streamer on Bilibili live streams. Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在 Bilibili 直播中自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
