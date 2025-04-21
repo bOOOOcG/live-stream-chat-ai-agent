@@ -6,6 +6,8 @@ An AI-powered agent designed to watch live streams, understand the content (audi
 
 ![Control Panel](docs/panel_example.png)
 
+[中文README](README.zh-CN.md)
+
 ## Overview
 
 This project enables an AI to act as a viewer in live streams. It captures stream data, sends it to a backend for processing by an LLM (like GPT models), and uses the AI's response to interact with the chat.
@@ -64,3 +66,29 @@ It consists of two main parts:
 **➡️ For detailed steps, please read the [Full Tutorial (TUTORIAL.md)](docs/TUTORIAL.md)**
 
 ## Project Structure
+.
+├── backend/ # Server code and related files
+├── frontend/ # Userscript code
+├── docs/ # Documentation and images
+├── README.md # This file (English)
+├── README.zh-CN.md # Chinese Readme
+├── LICENSE # AGPL-3.0 License file (You need to create this)
+└── .gitignore # Git ignore rules
+
+## Contributing
+
+Contributions are welcome! Please refer to the [Contributing Guide](CONTRIBUTING.md) (to be created) for more details.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the [LICENSE](./LICENSE) file for the full text.
+
+**Remember to create the `LICENSE` file with the AGPL-3.0 text.**
+
+## Disclaimer
+
+*   **Use Responsibly:** Automating chat requires ethical considerations. Respect platform ToS and streamer rules. Avoid spamming.
+*   **API Costs:** LLM, STT, and Cloudinary usage may incur costs. Monitor your usage.
+*   **Terms of Service:** Using automated scripts may violate platform ToS. Use at your own risk.
+*   **AI Limitations:** AI understanding depends on input quality (STT errors) and LLM capabilities. Misinterpretations or inappropriate responses are possible.
+
