@@ -423,7 +423,7 @@
         stopRecordingAndProcessing(); // 停止录制和处理流程
 
         // 更新按钮状态
-        runButton.textContent = '开始运行'; // 中文
+        runButton.textContent = 'Start'; // 中文
         runButton.classList.remove('running');
         // 确保主开关打开时，按钮是可用的
         if (isMainSwitchOn) {
