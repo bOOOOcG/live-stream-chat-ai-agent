@@ -624,6 +624,9 @@
         recorder.onstop = async () => {
             // 当录制停止时触发
             console.log(`${label} stopped recording.`);
+                        
+            recordingEndTimestamp = Date.now();
+
             // 标记对应的录制器为非活动
             if (label === 'Recorder 1') isRecorder1Active = false;
             else isRecorder2Active = false;
@@ -634,7 +637,7 @@
             if (chunks.length > 0) {
                 // 如果收集到了数据块
                 const audioBlob = new Blob(chunks, { type: recorder.mimeType }); // 将数据块合并成 Blob
-                if (audioBlob.size < 100) { // 避免发送几乎为空的 Blob
+                if (audioBlob.size < 8192) { // 避免发送几乎为空的 Blob
                     console.warn(`${label}: Blob size is very small (${audioBlob.size} bytes), skipping send.`);
                 } else {
                     const chats = collectChatMessages(); // 收集此录制期间的相关弹幕消息
@@ -803,6 +806,7 @@
         const newChats = [];
         // 查找弹幕元素，优先使用 .danmaku-item
         let chatElements = document.querySelectorAll('.danmaku-item');
+        
         if (!chatElements || chatElements.length === 0) {
             chatElements = document.querySelectorAll('.chat-item'); // 备用选择器
             if (!chatElements || chatElements.length === 0) {
@@ -816,7 +820,7 @@
         const startSec = Math.floor(recordingStartTimestamp / 1000);
         const endSec = Math.floor(recordingEndTimestamp / 1000);
         const effectiveEndSec = Math.max(endSec, startSec);
-
+        console.log(`[Chat Collector] Interval: ${startSec} - ${effectiveEndSec}`);
         // console.log(`Collecting chats between ${startSec} and ${effectiveEndSec} seconds epoch.`); // Debug 日志英文
 
         chatElements.forEach(chatElement => {

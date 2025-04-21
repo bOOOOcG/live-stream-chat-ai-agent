@@ -1198,7 +1198,7 @@ class LiveAssistantServer:
         if chat_list is None:
              chat_list = []
         elif not isinstance(chat_list, list):
-            print(f"Warning: Received non-list 'danmus' data (type: {type(chat_list)}), defaulting to empty list.")
+            print(f"Warning: Received non-list 'chats' data (type: {type(chat_list)}), defaulting to empty list.")
             chat_list = []
 
         # --- 1. Speech Recognition ---
@@ -1357,6 +1357,26 @@ def handle_upload():
              abort(400, description="Missing or empty 'roomId' form data.")
         scoped_room_id = room_id_form.strip() # Use sanitized ID for logging
 
+        # --- Summary Debug Output ---
+        try:
+            audio_size_kb = len(audio_file_storage.read()) / 1024
+            audio_file_storage.seek(0)  # 重要！重置游标，确保后面 .save() 有效
+
+            screenshot_file = request.files.get('screenshot')
+            screenshot_size_kb = len(screenshot_file.read()) / 1024 if screenshot_file else 0
+            if screenshot_file:
+                screenshot_file.seek(0)
+
+            chat_list_str = request.form.get('chats', '[]')
+            chat_list_len = len(json.loads(chat_list_str)) if chat_list_str else 0
+
+            print(f"[Upload Info] Room ID: {scoped_room_id}")
+            print(f"  📦 Audio: {audio_file_storage.filename} | {audio_size_kb:.1f} KB")
+            print(f"  🖼️ Screenshot: {screenshot_file.filename if screenshot_file else 'None'} | {screenshot_size_kb:.1f} KB")
+            print(f"  💬 chats: {chat_list_len} 条")
+        except Exception as e:
+            print(f"Warning: Failed to print upload summary info: {e}")
+
         # print(f"\n--- Incoming POST /upload for Room {scoped_room_id} ---") # Reduced verbosity
 
         # --- Securely Save Uploaded Files Temporarily ---
@@ -1379,13 +1399,13 @@ def handle_upload():
             # else:
                 # print("No screenshot file found in request or filename missing.") # Reduced verbosity
 
-        # --- Extract Chat List (from 'danmus' field) ---
-        chat_list_str = request.form.get('danmus', '[]') # Default to empty JSON list string
+        # --- Extract Chat List (from 'chats' field) ---
+        chat_list_str = request.form.get('chats', '[]') # Default to empty JSON list string
         chat_list = [] # Default to empty list
         try:
             chat_list = json.loads(chat_list_str)
             if not isinstance(chat_list, list):
-                 print(f"Warning: Decoded 'danmus' data is not a list (type: {type(chat_list)}). Using empty list.")
+                 print(f"Warning: Decoded 'chats' data is not a list (type: {type(chat_list)}). Using empty list.")
                  chat_list = []
             # Optional: Limit chat list size here if needed before processing
             # max_chats = 50
@@ -1393,9 +1413,9 @@ def handle_upload():
             #     print(f"Warning: Received large chat list ({len(chat_list)} items), truncating to last {max_chats}.")
             #     chat_list = chat_list[-max_chats:]
         except json.JSONDecodeError:
-            print(f"Warning: Could not decode 'danmus' JSON string: '{chat_list_str[:100]}...'. Using empty list.")
+            print(f"Warning: Could not decode 'chats' JSON string: '{chat_list_str[:100]}...'. Using empty list.")
             chat_list = []
-        # print(f"Received {len(chat_list)} chat messages (danmus).") # Reduced verbosity
+        # print(f"Received {len(chat_list)} chat messages (chats).") # Reduced verbosity
 
         # --- Delegate to Core Processing Logic ---
         result = live_server.process_request(
