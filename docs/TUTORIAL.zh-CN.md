@@ -158,7 +158,7 @@ python server.py
 
 在后端运行、用户脚本安装并配置好的情况下：
 
-![控制面板](docs/panel_example.png)
+![控制面板](panel_example.png)
 
 ### 找到控制面板
 
