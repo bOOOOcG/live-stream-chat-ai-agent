@@ -110,7 +110,7 @@ pip install -r requirements.txt
 
 ##### 选项 A: 本地开发 (mkcert)
 
-用于在本地机器上通过 `localhost` 或 `127.0.0.1` 访问时进行测试。
+用于在本地机器上通过 `localhost` 访问时进行测试。现代浏览器通常会在安全策略和证书验证方面对 `localhost` 进行特殊处理，这使得对于 `mkcert` 生成的证书，使用 `localhost` 比使用 `127.0.0.1` 更优选。
 
 1.  **确保 `mkcert` 已安装** (见先决条件)。
 2.  **安装本地 CA (运行一次):**
@@ -121,13 +121,13 @@ pip install -r requirements.txt
 3.  **生成证书 (在 `backend` 目录中):**
     ```bash
     # 在 'backend' 目录下执行
-    mkcert localhost 127.0.0.1
+    mkcert localhost
     ```
-    这会在当前目录创建 `localhost+1.pem` (证书) 和 `localhost+1-key.pem` (密钥)。
+    这通常会在当前目录创建 `localhost.pem` (证书) 和 `localhost-key.pem` (密钥)。请核实生成的实际文件名。
 4.  **更新 `.env` 路径:** 再次编辑您的 `.env` 文件。设置：
-    *   `SERVER_SSL_CERT_PATH=./localhost+1.pem`
-    *   `SERVER_SSL_KEY_PATH=./localhost+1-key.pem`
-    *(使用确切创建的文件名。使用 `./` 这样的相对路径或提供绝对路径)*
+    *   `SERVER_SSL_CERT_PATH=./localhost.pem`
+    *   `SERVER_SSL_KEY_PATH=./localhost-key.pem`
+    *(使用确切创建的文件名。使用 `./` 这样的相对路径或提供绝对路径。确保这些与上一步生成的文件匹配)*
 
 ##### 选项 B: 服务器部署 (Let's Encrypt / Certbot)
 
@@ -215,20 +215,20 @@ python server.py
 2.  **关键步骤:** 编辑该脚本。找到靠近顶部的 `API_ENDPOINT`。
     ```javascript
     // ** 必须与您的后端服务器地址完全匹配 **
-    // 示例 (本地, mkcert):
-    // const API_ENDPOINT = 'https://127.0.0.1:8181/upload';
+    // 示例 (本地, mkcert - 必须用 localhost!):
+    // const API_ENDPOINT = 'https://localhost:8181/upload';
     // 示例 (服务器, Let's Encrypt):
     // const API_ENDPOINT = 'https://myagent.mydomain.com:8181/upload';
     // 示例 (HTTP, 不推荐):
-    // const API_ENDPOINT = 'http://127.0.0.1:8181/upload';
+    // const API_ENDPOINT = 'http://localhost:8181/upload'; // 或 http://特定IP:端口
 
     const API_ENDPOINT = '在此粘贴你的后端URL/upload'; // <-- 编辑此行
     ```
-3.  **非常重要:** 将 `live-stream-chat-ai-agent.user.js` 内的 `API_ENDPOINT` 的值设置为与您的后端服务器运行地址**完全匹配**：
+3.  **非常重要:** 将 `API_ENDPOINT` 的值设置为与您的后端服务器运行地址**完全匹配**：
     *   如果 `SERVER_ENABLE_SSL=true`，使用 `https://`。
     *   如果 `SERVER_ENABLE_SSL=false`，使用 `http://` (注意浏览器限制)。
-    *   如果使用 `mkcert`，使用 `https://127.0.0.1:PORT` 或 `https://localhost:PORT`。
-    *   如果使用 `Certbot`/Let's Encrypt，使用 `https://yourdomain.com:PORT`。
+    *   **如果在本地使用 `mkcert`，您必须使用 `https://localhost:PORT`**。不要使用 `127.0.0.1`，因为浏览器处理 `localhost` 的证书方式不同，且更可靠。
+    *   如果在服务器上使用 `Certbot`/Let's Encrypt，使用 `https://yourdomain.com:PORT`。
     *   确保 `PORT` 与 `.env` 中的 `SERVER_PORT` 匹配。
     *   路径 `/upload` 通常应保持不变，除非您修改了 `server.py`。
 4.  保存脚本。
@@ -273,9 +273,9 @@ python server.py
 *   **“开始”按钮禁用:** 打开“总控开关”。等待视频检测（查看控制台）。
 *   **启动/运行时代理出错 (网络/连接问题):**
     *   **最常见:** 检查浏览器控制台 (F12) 的网络错误：`Failed to fetch` (获取失败), `TypeError: NetworkError` (类型错误：网络错误), `Mixed Content` (混合内容), `CORS policy` (CORS 策略)。
-    *   **验证 `API_ENDPOINT`:** 再次/三次检查用户脚本中的 `API_ENDPOINT` 是否与**确切**的后端地址匹配 (`https://` vs `http://`, 域名/IP, 端口)。
+    *   **验证 `API_ENDPOINT`:** 再次/三次检查用户脚本中的 `API_ENDPOINT` 是否与**确切**的后端地址匹配 (`https://` vs `http://`, 域名/IP/localhost, 端口)。**关键是：如果在本地使用 `mkcert`，请确保您使用的是 `https://localhost:PORT` 而不是 `https://127.0.0.1:PORT`**。
     *   **SSL 问题 (HTTPS):**
-        *   *本地 (mkcert):* `mkcert -install` 是否成功运行？如果未成功，浏览器可能会显示证书警告。尝试在浏览器标签页中直接访问 `API_ENDPOINT` - 如果弹出安全例外提示，请接受（仅用于本地测试）。
+        *   *本地 (mkcert):* `mkcert -install` 是否成功运行？`API_ENDPOINT` 是否正确设置为 `https://localhost:PORT`？如果 CA 不受信任或使用了错误的主机名，浏览器可能会显示证书警告。尝试在浏览器标签页中直接访问 `API_ENDPOINT` - 如果弹出安全例外提示，请接受（仅用于在 `localhost` 上进行本地测试）。
         *   *服务器 (Certbot):* 证书是否有效（未过期）？Python 进程是否能*读取*证书文件 (`/etc/letsencrypt/live/...`)？检查文件权限。Certbot 续订是否失败？服务器防火墙是否开放了 443 端口（或您自定义的 SSL 端口）？
     *   **后端未运行:** `python server.py` 进程是否仍在终端中活动？那里是否有错误？
     *   **防火墙:** 是否有防火墙（服务器或客户端）阻止了连接？

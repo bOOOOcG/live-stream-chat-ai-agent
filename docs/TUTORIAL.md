@@ -110,7 +110,7 @@ Choose the option matching your setup (local vs. server). You *must* do one of t
 
 ##### Option A: Local Development (mkcert)
 
-Use this for testing on your local machine accessing via `localhost` or `127.0.0.1`.
+Use this for testing on your local machine accessing via `localhost`. Modern browsers often treat `localhost` specially regarding security policies and certificate validation, making it preferable over `127.0.0.1` for `mkcert`-generated certificates.
 
 1.  **Ensure `mkcert` is installed** (See Prerequisites).
 2.  **Install Local CA (Run Once):**
@@ -121,13 +121,13 @@ Use this for testing on your local machine accessing via `localhost` or `127.0.0
 3.  **Generate Certificate (in `backend` directory):**
     ```bash
     # From within the 'backend' directory
-    mkcert localhost 127.0.0.1
+    mkcert localhost
     ```
-    This creates `localhost+1.pem` (certificate) and `localhost+1-key.pem` (key) in the current directory.
+    This typically creates `localhost.pem` (certificate) and `localhost-key.pem` (key) in the current directory. Verify the exact filenames generated.
 4.  **Update `.env` Paths:** Edit your `.env` file again. Set:
-    *   `SERVER_SSL_CERT_PATH=./localhost+1.pem`
-    *   `SERVER_SSL_KEY_PATH=./localhost+1-key.pem`
-    *(Use the exact filenames created. Use relative paths like `./` or provide absolute paths)*
+    *   `SERVER_SSL_CERT_PATH=./localhost.pem`
+    *   `SERVER_SSL_KEY_PATH=./localhost-key.pem`
+    *(Use the exact filenames created. Use relative paths like `./` or provide absolute paths. Ensure these match the files generated in the previous step)*
 
 ##### Option B: Server Deployment (Let's Encrypt / Certbot)
 
@@ -215,20 +215,20 @@ Install Tampermonkey/Violentmonkey if you haven't.
 2.  **CRITICAL:** Edit the script. Find `API_ENDPOINT` near the top.
     ```javascript
     // ** MUST MATCH YOUR BACKEND SERVER ADDRESS EXACTLY **
-    // Example (Local, mkcert):
-    // const API_ENDPOINT = 'https://127.0.0.1:8181/upload';
+    // Example (Local, mkcert - Use localhost!):
+    // const API_ENDPOINT = 'https://localhost:8181/upload';
     // Example (Server, Let's Encrypt):
     // const API_ENDPOINT = 'https://myagent.mydomain.com:8181/upload';
     // Example (HTTP, Not Recommended):
-    // const API_ENDPOINT = 'http://127.0.0.1:8181/upload';
+    // const API_ENDPOINT = 'http://localhost:8181/upload'; // Or http://specific-ip:port
 
     const API_ENDPOINT = 'PASTE_YOUR_BACKEND_URL_HERE/upload'; // <-- EDIT THIS LINE
     ```
-3.  **Very Important:** Set the `API_ENDPOINT` value in `live-stream-chat-ai-agent.user.js` to **exactly match** the address your backend server is running on.
+3.  **VERY IMPORTANT:** Set the `API_ENDPOINT` value to EXACTLY match the address where your backend server is running:
     *   Use `https://` if `SERVER_ENABLE_SSL=true`.
     *   Use `http://` if `SERVER_ENABLE_SSL=false` (Remember browser limitations).
-    *   If using `mkcert`, use `https://127.0.0.1:PORT` or `https://localhost:PORT`.
-    *   If using `Certbot`/Let's Encrypt, use `https://yourdomain.com:PORT`.
+    *   **If using `mkcert` locally, you MUST use `https://localhost:PORT`**. Do not use `127.0.0.1` as browsers handle certificates for `localhost` differently and more reliably.
+    *   If using `Certbot`/Let's Encrypt on a server, use `https://yourdomain.com:PORT`.
     *   Ensure the `PORT` matches `SERVER_PORT` in `.env`.
     *   The path `/upload` should generally be kept unless you modify `server.py`.
 4.  Save the script.
@@ -273,9 +273,9 @@ With backend running and userscript configured:
 *   **"Start" Disabled:** Turn "Control Switch" ON. Wait for video detection (console).
 *   **Agent Errors on Start/Run (Network/Connection):**
     *   **MOST COMMON:** Check Browser Console (F12) for Network errors: `Failed to fetch`, `TypeError: NetworkError`, `Mixed Content`, `CORS policy`.
-    *   **VERIFY `API_ENDPOINT`:** Double/triple-check the `API_ENDPOINT` in the userscript matches the **exact** backend address (`https://` vs `http://`, domain/IP, port).
+    *   **VERIFY `API_ENDPOINT`:** Double/triple-check the `API_ENDPOINT` in the userscript matches the **exact** backend address (`https://` vs `http://`, domain/IP/localhost, port). **Crucially, if using `mkcert` locally, ensure you are using `https://localhost:PORT` and NOT `https://127.0.0.1:PORT`**.
     *   **SSL Issues (HTTPS):**
-        *   *Local (mkcert):* Did `mkcert -install` run successfully? Browser might show certificate warnings if not. Try accessing the `API_ENDPOINT` directly in a browser tab - accept security exception if prompted (for local testing only).
+        *   *Local (mkcert):* Did `mkcert -install` run successfully? Is the `API_ENDPOINT` correctly set to `https://localhost:PORT`? Browser might show certificate warnings if the CA isn't trusted or if using the wrong hostname. Try accessing the `API_ENDPOINT` directly in a browser tab - accept security exception if prompted (for local testing only on `localhost`).
         *   *Server (Certbot):* Is the certificate valid (not expired)? Can the Python process *read* the certificate files (`/etc/letsencrypt/live/...`)? Check file permissions. Did Certbot renewal fail? Is port 443 (or your custom SSL port) open on the server firewall?
     *   **Backend Not Running:** Is the `python server.py` process still active in its terminal? Any errors there?
     *   **Firewall:** Is a firewall blocking the connection (either on server or client)?
