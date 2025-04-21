@@ -21,6 +21,6 @@ tests/
 
 tj.py
 config.cfg
-server.py
 
-!auto_chat_ai_panel_example.png
+
+!panel_example.png
