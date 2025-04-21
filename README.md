@@ -1,87 +1,83 @@
-# Bilibili Live Auto Chat AI
+# Live Stream Chat AI Agent
 
-This is an AI-powered script designed to automatically interact with live streamers on Bilibili. The project consists of a Tampermonkey client script. The AI listens to the live stream audio, processes it using OpenAI and Youdao's speech recognition, and sends relevant chat messages to engage with the streamer based on the speech-to-text results. Additionally, the script captures screenshots from the live stream to provide context for the AI.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) <!-- Optional Badge -->
 
-## Features
+An AI-powered agent designed to watch live streams, understand the content (audio, chat, video), and participate in the chat automatically using a Large Language Model (LLM).
 
-- **Automatic Speech Recognition**: Uses OpenAI Whisper and Youdao for speech-to-text recognition.
-- **Auto Chat**: Automatically sends chat messages based on the transcribed audio content.
-- **Live Stream Interaction**: AI can mimic human-like interactions in live streams.
-- **Tampermonkey Client**: A client script for capturing audio and sending chat messages automatically during live streams on Bilibili.
-- **Screenshot Capture**: Captures live stream screenshots to enhance AI responses.
+![Control Panel](docs/panel_example.png)
 
-## Example
+## Overview
 
-Here is an example of the Tampermonkey script's control panel for the Bilibili live stream:
+This project consists of two main parts:
 
-![Auto Chat AI Control Panel](auto_chat_ai_panel_example.png)
+1.  **Frontend Userscript:** Runs in your browser (via Tampermonkey/Violentmonkey) on live stream pages. It captures audio, chat messages, and screenshots, displays a control panel, and sends/receives data from the backend.
+2.  **Backend Server:** A Python Flask server that receives data from the userscript, performs Speech-to-Text (STT), optionally uploads screenshots, interacts with an LLM (like GPT models via an OpenAI-compatible API), manages conversation memory, and sends back generated chat messages or actions.
+
+## Key Features
+
+*   **Automated Chatting:** Sends AI-generated messages to the live stream chat.
+*   **Multimodal Understanding:** Processes live audio, chat history, and screenshots (optional) for context.
+*   **LLM Integration:** Leverages powerful LLMs for intelligent interaction and response generation.
+*   **Configurable AI Personality:** Define the agent's behavior and personality through a system prompt.
+*   **Per-Room Memory:** Maintains a "notepad" and conversation history specific to each stream room ID.
+*   **Multiple STT Options:** Supports Whisper (via OpenAI API) and Youdao ASR.
+*   **Vision Support (Optional):** Can upload screenshots to Cloudinary for analysis by vision-capable LLMs.
+*   **User Control:** Provides an in-page panel to start/stop the agent, manage permissions, and control volume/mute (for user convenience, doesn't affect AI).
+
+## Current & Future Platform Support
+
+*   **Currently Supported:**
+    *   Bilibili Live (`live.bilibili.com`)
+*   **Planned Future Support:**
+    *   YouTube Live
+    *   Twitch
+    *   Facebook Live
+    *   Other popular platforms (contributions welcome!)
+
+## Technologies Used
+
+*   **Frontend:** JavaScript (ES6+), Web Audio API, MediaRecorder API, Canvas API, DOM Manipulation, Tampermonkey/Violentmonkey
+*   **Backend:** Python 3, Flask, Requests, OpenAI Python Library, Pillow, Cloudinary Python SDK (optional), python-dotenv, Tiktoken
+*   **AI:** Any OpenAI-compatible LLM API (e.g., GPT-4, GPT-4o, Claude via compatible endpoints, local models via LM Studio/Ollama), Youdao ASR API (optional), Whisper (optional)
+
+## Requirements
+
+*   **Browser:** A modern web browser like Chrome, Firefox, or Edge.
+*   **Userscript Manager:** Tampermonkey or Violentmonkey browser extension.
+*   **Backend Environment:**
+    *   Python 3.8+
+    *   `pip` (Python package installer)
+    *   `ffmpeg` installed and accessible in your system's PATH (required for Youdao STT audio conversion).
+    *   API Keys (depending on your configuration):
+        *   LLM API Key & URL (OpenAI or compatible service) - **Required**
+        *   Youdao App Key & Secret (if using Youdao STT)
+        *   Cloudinary Credentials (if using Vision with Cloudinary upload)
+
+## Quick Start
+
+1.  **Setup Backend:** Clone the repository, install Python dependencies, configure your API keys in a `.env` file, and run the server. See the [**Backend Setup Guide**](docs/TUTORIAL.md#backend-server-setup).
+2.  **Install Userscript:** Install Tampermonkey/Violentmonkey and then install the `live-stream-chat-ai-agent.user.js` script. See the [**Frontend Setup Guide**](docs/TUTORIAL.md#frontend-userscript-setup).
+3.  **Usage:** Navigate to a supported live stream page, use the control panel to start the agent. See the [**Usage Guide**](docs/TUTORIAL.md#usage).
+
+**➡️ For detailed instructions, please read the [Full Tutorial (TUTORIAL.md)](docs/TUTORIAL.md)**
 
 ## Project Structure
 
-- **Client**: A Tampermonkey script that interacts with the live stream, captures audio and screenshots, and sends requests to the server.
-
-## Future Platform Support
-
-We plan to extend the platform support to other live-streaming services such as:
-
-- **YouTube Live**
-- **Twitch**
-- **Facebook Live**
-- **Other popular streaming platforms**
-
-This will allow broader usage of the auto chat AI across multiple streaming ecosystems.
-
-## Server Code
-
-The server-side code is currently **not open-source**. The client-side Tampermonkey script is open-source and available for use and modification. The server-side implementation will be considered for future open-sourcing.
-
-For more information on how the client interacts with the server, feel free to open an issue or ask questions.
-
-## Prerequisites
-
-Before starting, make sure you have the following installed:
-
-- [Tampermonkey](https://www.tampermonkey.net/) for the Bilibili client script.
-
-## Tampermonkey Script Setup
-
-1. Install [Tampermonkey](https://www.tampermonkey.net/) in your browser.
-2. Copy the Tampermonkey client script from the `client_script.js` file and create a new Tampermonkey script.
-3. Replace the server URL in the script with your server’s address:
-
-    ```javascript
-    xhr.open('POST', 'https://your_server_address:8181/upload', true);
-    ```
-
-4. Save and activate the script in Tampermonkey.
-
-## Running the Project
-
-1. Open a Bilibili live stream. The Tampermonkey script will automatically start recording audio, capture screenshots, and send them to the server for processing.
-
-2. The server (which is currently not open-sourced) will use OpenAI and Youdao to process the audio, generate a GPT-4 response, and send chat messages back to the live stream.
-
-## Server Command-Line Arguments
-
-- `--test`: Enable test mode to save received files for debugging.
-- `--local`: Restrict server access to `127.0.0.1` (localhost only).
-- `--check-system-tokens`: Check the token count of the system prompt.
-- `--use-whisper`: Use OpenAI Whisper for speech recognition.
-- `--compare-speech-recognition`: Compare speech recognition results from Youdao and Whisper.
-- `--use-both`: Use both Youdao and Whisper for speech recognition.
-
-## License
-
-This project is licensed under the AGPL-3.0 License. For more details, see the [LICENSE](LICENSE) file.
-
-## Chinese Version (中文版)
-
-For the Chinese version of this README, click [here](README-zh.md).
+*   `/frontend`: Contains the Userscript code.
+*   `/backend`: Contains the Python Flask server code and configuration examples.
+*   `/docs`: Contains documentation files and images.
 
 ## Contributing
 
-Contributions are welcome! Feel free to submit issues or pull requests for improvements or bug fixes.
+Contributions are welcome! Please read the [**Contributing Guide (CONTRIBUTING.md)**](docs/CONTRIBUTING.md) (to be created) for details on bug reports, feature requests, and pull requests.
 
-## Support
+## License
 
-For any questions or issues, please open an issue on the [GitHub repository](https://github.com/bOOOOcG/StreamAssist_AI).
+This project is licensed under the [MIT License](./LICENSE).
+
+## Disclaimer
+
+*   **Use Responsibly:** This tool automates chat interaction. Use it ethically and respect the terms of service of the streaming platforms and the rules of individual streamers. Avoid spamming or disruptive behavior.
+*   **API Costs:** Using LLM APIs and potentially STT/Cloudinary services can incur costs. Monitor your usage and set limits if necessary.
+*   **Terms of Service:** Using automated scripts might violate the Terms of Service of some platforms. Use at your own risk. The developers are not responsible for any consequences of using this script.
+*   **AI Limitations:** The AI's understanding and responses are based on the data it receives (which can be imperfect due to STT errors, etc.) and the capabilities of the LLM. It might misunderstand context or generate inappropriate responses sometimes.
