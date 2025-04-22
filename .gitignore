@@ -11,7 +11,8 @@
 # 忽略目录
 venv/
 
-prompts/
+backend/prompts/
+backend/memory/
 
 model/
 
@@ -24,8 +25,6 @@ bak/
 test/
 
 tests/
-
-memory/
 
 tools/bin/
 tools/downloads/
