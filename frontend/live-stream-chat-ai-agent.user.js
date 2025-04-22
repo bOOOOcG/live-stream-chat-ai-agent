@@ -59,10 +59,10 @@
     // --- 初始化 ---
     const roomId = getRoomId();
     if (!roomId) {
-        console.error("AI Agent: Could not determine Room ID."); // 日志使用英文
+        console.error("AI Agent: Could not determine Room ID.");
         return; // 如果找不到房间 ID，则停止脚本执行
     }
-    console.log(`AI Agent: Initialized for Room ID: ${roomId}`); // 日志使用英文
+    console.log(`AI Agent: Initialized for Room ID: ${roomId}`);
 
     createControlPanel(); // 创建控制面板
     observeVideoElement(); // 开始观察视频元素的出现
@@ -399,7 +399,7 @@
             console.log("AI Agent started successfully.");
         } else { // 初始化音频失败
             console.error("Failed to initialize audio. Agent cannot start.");
-            alert("错误：无法访问视频音频。请确保直播正在播放。"); // 中文提示
+            alert("错误：无法访问视频音频。请确保直播正在播放。");
             // 保持按钮和开关的状态（用户需要修复问题）
             isAgentRunning = false; // 确保运行状态为 false
             runButton.textContent = 'Start'; // 中文
@@ -553,7 +553,7 @@
                 const volume = isMuted ? 0 : volumeSlider.value / 100; // 静音则为0，否则为滑块值
                 // 使用 B站 自己的音量接口可能更可靠，但这里保留 GainNode 控制逻辑
                 gainNode.gain.setValueAtTime(volume, audioContext.currentTime); // 平滑设置音量
-                // console.log(`Gain set to: ${volume}`); // Debug 日志英文
+                // console.log(`Gain set to: ${volume}`);
             } catch (e) {
                 console.error("Error setting gain value:", e);
             }
@@ -585,7 +585,7 @@
             console.log("MediaRecorders created.");
         } catch (e) {
             console.error("Error creating MediaRecorder:", e);
-            alert(`错误：浏览器不支持所需的音频格式 (${options.mimeType})。无法录制。`); // 中文提示
+            alert(`错误：浏览器不支持所需的音频格式 (${options.mimeType})。无法录制。`);
             stopAgent(); // 创建失败则停止代理
             return; // 停止进程
         }
@@ -609,7 +609,7 @@
         recorder.ondataavailable = (event) => {
             // 当有音频数据可用时触发
             if (event.data.size > 0) {
-                // console.log(`Audio data available from ${label}: ${event.data.size} bytes`); // Debug 日志英文
+                // console.log(`Audio data available from ${label}: ${event.data.size} bytes`);
                 chunks.push(event.data); // 将数据块存入数组
             }
         };
@@ -675,7 +675,7 @@
             else isRecorder2Active = false;
 
             // 尝试恢复？也许停止一切并发出错误信号。
-            alert(`录制器 ${label} 发生错误。请检查控制台并可能需要重启代理。`); // 中文提示
+            alert(`录制器 ${label} 发生错误。请检查控制台并可能需要重启代理。`);
             stopAgent(); // 在错误时停止整个代理
         };
     }
@@ -748,7 +748,7 @@
 
         } catch (startError) {
             console.error("Error starting recorder:", startError);
-            alert("启动音频录制器失败。直播流可能已停止或发生内部错误。"); // 中文提示
+            alert("启动音频录制器失败。直播流可能已停止或发生内部错误。");
             // 标记为非活动
             if (recorderToStart === mediaRecorder1) isRecorder1Active = false;
             else isRecorder2Active = false;
@@ -813,7 +813,7 @@
                 console.warn("Could not find chat elements (tried .danmaku-item, .chat-item). Chat collection might fail.");
                 return newChats;
             } else {
-                // console.log("Using fallback selector '.chat-item' for chat messages."); // Debug 日志英文
+                // console.log("Using fallback selector '.chat-item' for chat messages.");
             }
         }
 
@@ -821,7 +821,7 @@
         const endSec = Math.floor(recordingEndTimestamp / 1000);
         const effectiveEndSec = Math.max(endSec, startSec);
         console.log(`[Chat Collector] Interval: ${startSec} - ${effectiveEndSec}`);
-        // console.log(`Collecting chats between ${startSec} and ${effectiveEndSec} seconds epoch.`); // Debug 日志英文
+        // console.log(`Collecting chats between ${startSec} and ${effectiveEndSec} seconds epoch.`);
 
         chatElements.forEach(chatElement => {
             try {
@@ -840,7 +840,7 @@
                         isInTimeWindow = false; // 无效时间戳则不包含
                     }
                 } else {
-                    // console.warn("Chat element missing timestamp attribute (data-ts/data-timestamp)."); // Debug 日志英文
+                    // console.warn("Chat element missing timestamp attribute (data-ts/data-timestamp).");
                     // isInTimeWindow = true; // 取消注释以在没有时间戳时包含所有弹幕
                     isInTimeWindow = false; // 保持 false 以严格按时间过滤
                 }
@@ -869,7 +869,7 @@
                             timestamp: isNaN(timestamp) ? null : timestamp // 发送时间戳（如果可用）以供参考
                         });
                     } else {
-                        // console.warn("Skipping chat item due to missing data:", { uid, uname, content: content ? 'exists' : 'missing', timestamp }); // Debug 日志英文
+                        // console.warn("Skipping chat item due to missing data:", { uid, uname, content: content ? 'exists' : 'missing', timestamp });
                     }
                 }
             } catch (e) {
@@ -966,7 +966,7 @@
             formData.append('screenshot', screenshotBlob, screenshotFilename);
         }
 
-        // console.log('[DEBUG] FormData prepared for sending.'); // Debug 日志英文
+        // console.log('[DEBUG] FormData prepared for sending.');
 
         // --- 使用 XMLHttpRequest 发送 ---
         const xhr = new XMLHttpRequest();
@@ -1074,7 +1074,7 @@
      */
     function processChatQueue() {
         if (chatQueue.length === 0) {
-            // console.log("Chat queue is empty."); // Debug 日志英文
+            // console.log("Chat queue is empty.");
             return;
         }
         // 在发送前再次检查权限
