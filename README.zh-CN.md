@@ -71,7 +71,7 @@
 ├── docs/             # 文档和图片
 ├── README.md         # 英文说明
 ├── README.zh-CN.md   # 本文件 (中文说明)
-├── LICENSE           # AGPL-3.0 许可证文件 (你需要创建此文件)
+├── LICENSE           # AGPL-3.0 许可证文件
 └── .gitignore        # Git 忽略规则
 ```
 
