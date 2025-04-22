@@ -9,8 +9,6 @@
 // @author       bOc
 // @match        https://live.bilibili.com/*
 // @grant        none
-// @updateURL    https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent/raw/refs/heads/main/frontend/live-stream-chat-ai-agent.user.js
-// @downloadURL  https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent/raw/refs/heads/main/frontend/live-stream-chat-ai-agent.user.js
 // ==/UserScript==
 
 (function () {
