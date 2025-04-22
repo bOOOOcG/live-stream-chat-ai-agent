@@ -4,8 +4,15 @@
 *.prof
 *.rar
 *.png
+*.pem
+*.key
+*.crt
 
 # 忽略目录
+venv/
+
+prompts/
+
 model/
 
 dist/
@@ -20,9 +27,13 @@ tests/
 
 memory/
 
+tools/bin/
+tools/downloads/
+
 tj.py
 config.cfg
 .env
 
 
 !panel_example.png
+!prompts/system_prompt.txt
