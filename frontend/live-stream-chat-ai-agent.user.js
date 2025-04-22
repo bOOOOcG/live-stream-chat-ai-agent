@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      0.9
+// @version      0.10
 // @description  An AI script for automatically sending chat messages and interacting with the streamer on Bilibili live streams. Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在 Bilibili 直播中自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在 Bilibili 直播中自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -624,7 +624,7 @@
         recorder.onstop = async () => {
             // 当录制停止时触发
             console.log(`${label} stopped recording.`);
-                        
+
             recordingEndTimestamp = Date.now();
 
             // 标记对应的录制器为非活动
@@ -806,7 +806,7 @@
         const newChats = [];
         // 查找弹幕元素，优先使用 .danmaku-item
         let chatElements = document.querySelectorAll('.danmaku-item');
-        
+
         if (!chatElements || chatElements.length === 0) {
             chatElements = document.querySelectorAll('.chat-item'); // 备用选择器
             if (!chatElements || chatElements.length === 0) {
@@ -1056,16 +1056,50 @@
     }
 
     /**
-     * 将长消息分割成适合弹幕发送的较短部分。
-     * @param {string} message - 要分割的消息。
-     * @returns {string[]} 消息部分的数组。
+     * 将长消息拆分成适合弹幕发送的短片段。
+     * 规则：
+     *   1. 先尝试在空格处分段，保证每段 ≤ MAX_CHAT_LENGTH。
+     *   2. 若某段本身已超过上限，再进行二次等长切分。
+     * @param {string} message - 原始长消息
+     * @returns {string[]}     - 拆分后的弹幕数组
      */
     function splitMessage(message) {
         const parts = [];
-        if (!message) return parts; // 如果消息为空，返回空数组
-        for (let i = 0; i < message.length; i += MAX_CHAT_LENGTH) { // 按最大长度分割
-            parts.push(message.slice(i, i + MAX_CHAT_LENGTH));
+        if (!message) return parts;
+
+        // 若整体就不超长，直接返回
+        if (message.length <= MAX_CHAT_LENGTH) return [message];
+
+        const tokens = message.split(/\s+/);          // 先按空格切成词组
+        let current = '';
+
+        const pushCurrent = () => {
+            if (!current) return;
+            // 如果当前片段仍然超限，就再按长度硬切
+            if (current.length > MAX_CHAT_LENGTH) {
+                for (let i = 0; i < current.length; i += MAX_CHAT_LENGTH) {
+                    parts.push(current.slice(i, i + MAX_CHAT_LENGTH));
+                }
+            } else {
+                parts.push(current);
+            }
+            current = '';
+        };
+
+        for (let i = 0; i < tokens.length; i++) {
+            const word = tokens[i];
+            // 预留 1 个空格（除第一个词外）
+            const tentative = current ? `${current} ${word}` : word;
+
+            if (tentative.length > MAX_CHAT_LENGTH) {
+                pushCurrent();      // 先把 current 收进去
+                current = word;     // 开启新的片段
+            } else {
+                current = tentative;
+            }
         }
+        pushCurrent(); // 别忘了收尾
+
         return parts;
     }
 
@@ -1107,11 +1141,6 @@
             });
     }
 
-    /**
-     * 在 Bilibili 界面中模拟输入和发送弹幕消息。
-     * @param {string} message - 要发送的消息字符串。
-     * @returns {Promise<void>} 一个 promise，在消息发送时解析，或在错误时拒绝。
-     */
     /**
      * 在 Bilibili 界面中模拟输入和发送弹幕消息。
      * @param {string} message - 要发送的消息字符串。
