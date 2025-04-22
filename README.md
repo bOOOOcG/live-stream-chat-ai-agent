@@ -85,8 +85,6 @@ Contributions are welcome! Please refer to the [Contributing Guide](CONTRIBUTING
 
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the [LICENSE](./LICENSE) file for the full text.
 
-**Remember to create the `LICENSE` file with the AGPL-3.0 text.**
-
 ## Disclaimer
 
 *   **Use Responsibly:** Automating chat requires ethical considerations. Respect platform ToS and streamer rules. Avoid spamming.

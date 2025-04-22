@@ -83,8 +83,6 @@
 
 本项目基于 GNU Affero General Public License v3.0 (AGPL-3.0) 授权。请参阅 [LICENSE](./LICENSE) 文件获取完整许可证文本。
 
-**请记得创建 `LICENSE` 文件并粘贴 AGPL-3.0 许可证文本。**
-
 ## 免责声明
 
 *   **负责任地使用:** 自动化聊天需考虑道德因素。请遵守平台服务条款 (ToS) 和主播规定，避免刷屏。
