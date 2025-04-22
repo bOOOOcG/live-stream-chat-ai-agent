@@ -73,7 +73,7 @@ It consists of two main parts:
 ├── docs/             # Documentation and images
 ├── README.md         # This file (English)
 ├── README.zh-CN.md   # Chinese Readme
-├── LICENSE           # AGPL-3.0 License file (You need to create this)
+├── LICENSE           # AGPL-3.0 License file
 └── .gitignore        # Git ignore rules
 ```
 
