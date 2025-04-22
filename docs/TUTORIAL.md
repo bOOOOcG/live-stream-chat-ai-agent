@@ -125,8 +125,8 @@ Use this for testing on your local machine accessing via `localhost`. Modern bro
     ```
     This typically creates `localhost.pem` (certificate) and `localhost-key.pem` (key) in the current directory. Verify the exact filenames generated.
 4.  **Update `.env` Paths:** Edit your `.env` file again. Set:
-    *   `SERVER_SSL_CERT_PATH=./localhost.pem`
-    *   `SERVER_SSL_KEY_PATH=./localhost-key.pem`
+    *   `SSL_CERT_PATH=./localhost.pem`
+    *   `SSL_KEY_PATH=./localhost-key.pem`
     *(Use the exact filenames created. Use relative paths like `./` or provide absolute paths. Ensure these match the files generated in the previous step)*
 
 ##### Option B: Server Deployment (Let's Encrypt / Certbot)
