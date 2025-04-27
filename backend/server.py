@@ -941,7 +941,7 @@ class LiveAssistantServer:
         # 1. Load notepad once as a system message (moved out of user content)
         notepad_prompt_str, _ = self._load_notepad_for_prompt(room_id)
         # ensure notepad is the first system message
-        system_notepad_message = {"role": "system", "content": f"以下是你记录的该直播间的笔记: {notepad_prompt_str}"}
+        system_notepad_message = {"role": "system", "content": f"以下是你记录的该直播间的笔记 记得多做笔记 因为你的记忆很短 只能靠记笔记维持记忆: {notepad_prompt_str}"}
 
         # 2. Format chat list for prompt, getting its token count
         chatlist_prompt_str, _ = self._load_chat_list_for_prompt(current_chat_list)
@@ -984,10 +984,10 @@ class LiveAssistantServer:
         # 5. Assemble the final list of messages for the API
         final_messages = []
         # insert notepad system message before other system prompts
+        final_messages.extend(self.system_prompt_message_for_api)
         final_messages.append(system_notepad_message)
         final_messages.extend(history_messages)
-        final_messages.extend(self.system_prompt_message_for_api)
-
+        
         # Construct the current user message
         if combined_text_for_turn or (self.enable_vision and image_url):
             content_list = []
