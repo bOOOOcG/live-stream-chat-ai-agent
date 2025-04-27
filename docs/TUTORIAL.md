@@ -99,8 +99,8 @@ pip install -r requirements.txt
         *   `FFMPEG_PATH`: Only set if `ffmpeg` is not in your system PATH. (e.g., `C:/ffmpeg/bin/ffmpeg.exe` or `/usr/local/bin/ffmpeg`).
     *   **Server SSL Settings (Configure Paths in Step 6):**
         *   `SERVER_ENABLE_SSL`: Set to `true` to enable HTTPS (Highly Recommended).
-        *   `SERVER_SSL_CERT_PATH`: Path to your SSL certificate file (`.pem`, `.crt`). Will be set in Step 6.
-        *   `SERVER_SSL_KEY_PATH`: Path to your SSL private key file (`.pem`, `.key`). Will be set in Step 6.
+        *   `SSL_CERT_PATH`: Path to your SSL certificate file (`.pem`, `.crt`). Will be set in Step 6.
+        *   `SSL_KEY_PATH`: Path to your SSL private key file (`.pem`, `.key`). Will be set in Step 6.
         *   `SERVER_HOST`: Typically `0.0.0.0` to listen on all interfaces.
         *   `SERVER_PORT`: The port the backend will listen on (e.g., `8181`).
 
@@ -169,8 +169,8 @@ Use this when deploying the backend to a public server with its own domain name 
     *   Or, carefully adjust permissions (less recommended for security). A common approach is to use `setfacl` if available, or copy the certs periodically to an accessible location with a cron job (more complex). *Check Certbot documentation or server admin best practices for managing permissions.*
 
 6.  **Update `.env` Paths:** Edit your `.env` file again. Set:
-    *   `SERVER_SSL_CERT_PATH=/etc/letsencrypt/live/myagent.mydomain.com/fullchain.pem`
-    *   `SERVER_SSL_KEY_PATH=/etc/letsencrypt/live/myagent.mydomain.com/privkey.pem`
+    *   `SSL_CERT_PATH=/etc/letsencrypt/live/myagent.mydomain.com/fullchain.pem`
+    *   `SSL_KEY_PATH=/etc/letsencrypt/live/myagent.mydomain.com/privkey.pem`
     *(Use the exact, full paths provided by Certbot)*
 
 7.  **Restart Original Webserver (If stopped):**
@@ -282,7 +282,7 @@ With backend running and userscript configured:
 *   **Backend Errors (Check Terminal):**
     *   **API Keys:** Invalid/missing LLM or Youdao keys in `.env`.
     *   **Youdao STT Errors:** Incorrect App Key/Secret? Exceeded quota? Network issue reaching Youdao? FFmpeg conversion failed? (Check FFmpeg errors).
-    *   **SSL File Errors:** Backend cannot find/read certificate/key specified in `.env`. Check `SERVER_SSL_CERT_PATH`, `SERVER_SSL_KEY_PATH` and file permissions.
+    *   **SSL File Errors:** Backend cannot find/read certificate/key specified in `.env`. Check `SSL_CERT_PATH`, `SSL_KEY_PATH` and file permissions.
     *   **Other Python Errors:** Read the traceback.
 *   **Chat Messages Not Sending:** "Chat Permission" ON? Backend logs show `{msg}` generated? F12 console errors (DOM selectors may need update)? Chat cooldown?
 *   **FFmpeg Errors:** Verify install & `FFMPEG_PATH`. Try running ffmpeg command manually from terminal.

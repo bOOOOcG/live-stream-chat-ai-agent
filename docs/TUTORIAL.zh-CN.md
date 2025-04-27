@@ -99,8 +99,8 @@ pip install -r requirements.txt
         *   `FFMPEG_PATH`: 仅当 `ffmpeg` 不在系统 PATH 中时设置。(例如 `C:/ffmpeg/bin/ffmpeg.exe` 或 `/usr/local/bin/ffmpeg`)。
     *   **服务器 SSL 设置 (路径在步骤 6 中配置):**
         *   `SERVER_ENABLE_SSL`: 设置为 `true` 启用 HTTPS (强烈推荐)。
-        *   `SERVER_SSL_CERT_PATH`: 指向您的 SSL 证书文件 (`.pem`, `.crt`) 的路径。将在步骤 6 中设置。
-        *   `SERVER_SSL_KEY_PATH`: 指向您的 SSL 私钥文件 (`.pem`, `.key`) 的路径。将在步骤 6 中设置。
+        *   `SSL_CERT_PATH`: 指向您的 SSL 证书文件 (`.pem`, `.crt`) 的路径。将在步骤 6 中设置。
+        *   `SSL_KEY_PATH`: 指向您的 SSL 私钥文件 (`.pem`, `.key`) 的路径。将在步骤 6 中设置。
         *   `SERVER_HOST`: 通常是 `0.0.0.0` 以监听所有网络接口。
         *   `SERVER_PORT`: 后端监听的端口 (例如 `8181`)。
 
@@ -125,8 +125,8 @@ pip install -r requirements.txt
     ```
     这通常会在当前目录创建 `localhost.pem` (证书) 和 `localhost-key.pem` (密钥)。请核实生成的实际文件名。
 4.  **更新 `.env` 路径:** 再次编辑您的 `.env` 文件。设置：
-    *   `SERVER_SSL_CERT_PATH=./localhost.pem`
-    *   `SERVER_SSL_KEY_PATH=./localhost-key.pem`
+    *   `SSL_CERT_PATH=./localhost.pem`
+    *   `SSL_KEY_PATH=./localhost-key.pem`
     *(使用确切创建的文件名。使用 `./` 这样的相对路径或提供绝对路径。确保这些与上一步生成的文件匹配)*
 
 ##### 选项 B: 服务器部署 (Let's Encrypt / Certbot)
@@ -282,7 +282,7 @@ python server.py
 *   **后端错误 (检查终端):**
     *   **API 密钥:** `.env` 中 LLM 或有道的密钥无效/缺失。
     *   **有道 STT 错误:** App Key/Secret 不正确？超出配额？连接有道的网络问题？FFmpeg 转换失败？（检查 FFmpeg 错误）。
-    *   **SSL 文件错误:** 后端找不到或无法读取 `.env` 中指定的证书/密钥。检查 `SERVER_SSL_CERT_PATH`、`SERVER_SSL_KEY_PATH` 和文件权限。
+    *   **SSL 文件错误:** 后端找不到或无法读取 `.env` 中指定的证书/密钥。检查 `SSL_CERT_PATH`、`SSL_KEY_PATH` 和文件权限。
     *   **其他 Python 错误:** 阅读错误回溯信息 (traceback)。
 *   **聊天消息未发送:** “发言许可”是否打开？后端日志是否显示生成了 `{msg}`？F12 控制台是否有错误（DOM 选择器可能需要更新）？聊天冷却？
 *   **FFmpeg 错误:** 验证安装和 `FFMPEG_PATH`。尝试从终端手动运行 ffmpeg 命令。
