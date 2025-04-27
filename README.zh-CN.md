@@ -33,7 +33,8 @@
     *   YouTube Live (`youtube.com`)
 *   **计划未来支持:**
     *   Twitch
-    *   Facebook Live
+    *   虎牙直播 (`[huya.com](https://www.huya.com/)`)
+    *   斗鱼直播 (`[douyu.com](http://douyu.com/)`)
     *   其他流行平台 (欢迎贡献!)
 
 ## 技术栈
