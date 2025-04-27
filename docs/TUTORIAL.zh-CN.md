@@ -54,7 +54,7 @@
 #### 1. 获取代码
 
 ```bash
-git clone https://github.com/your-username/live-stream-chat-ai-agent.git
+git clone https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent.git
 # 或下载 ZIP 并解压
 ```
 
@@ -169,8 +169,8 @@ pip install -r requirements.txt
     *   或者，谨慎地调整权限（安全性较低）。一种常见方法是使用 `setfacl` (如果可用)，或者通过 cron 作业定期将证书复制到可访问的位置（更复杂）。*请查阅 Certbot 文档或服务器管理最佳实践来管理权限。*
 
 6.  **更新 `.env` 路径:** 再次编辑您的 `.env` 文件。设置：
-    *   `SERVER_SSL_CERT_PATH=/etc/letsencrypt/live/myagent.mydomain.com/fullchain.pem`
-    *   `SERVER_SSL_KEY_PATH=/etc/letsencrypt/live/myagent.mydomain.com/privkey.pem`
+    *   `SSL_CERT_PATH=/etc/letsencrypt/live/myagent.mydomain.com/fullchain.pem`
+    *   `SSL_KEY_PATH=/etc/letsencrypt/live/myagent.mydomain.com/privkey.pem`
     *(使用 Certbot 提供的确切、完整的路径)*
 
 7.  **重启原来的 Web 服务器 (如果已停止):**
