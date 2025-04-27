@@ -872,7 +872,7 @@ def main():
         config['LLM_API_KEY'] = ask_string("请输入 Gemini API Key", default=config.get('LLM_API_KEY'), required=True, secret=True)
         config['LLM_API_MODEL'] = ask_choice("请选择 Gemini 模型", ["gemini-pro", "gemini-1.5-pro-latest"], default="gemini-pro")
 
-    elif llm_provider == "DeepSeek (国产 GPT 类模型)":
+    elif llm_provider == "DeepSeek (中国产 GPT 类模型)":
         config['LLM_API_URL'] = "https://api.deepseek.com/v1"
         if ask_yes_no("需要打开 DeepSeek 密钥页面吗?", default='yes'):
             webbrowser.open("https://platform.deepseek.com/console/apikeys")
