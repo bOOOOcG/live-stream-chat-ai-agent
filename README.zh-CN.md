@@ -30,8 +30,8 @@
 
 *   **当前支持:**
     *   Bilibili 直播 (`live.bilibili.com`)
+    *   YouTube Live (`youtube.com`)
 *   **计划未来支持:**
-    *   YouTube Live
     *   Twitch
     *   Facebook Live
     *   其他流行平台 (欢迎贡献!)

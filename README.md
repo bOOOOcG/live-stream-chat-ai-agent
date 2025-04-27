@@ -31,9 +31,9 @@ It consists of two main parts:
 ## Platform Support
 
 *   **Currently Supported:**
+    *   YouTube Live (`youtube.com`)
     *   Bilibili Live (`live.bilibili.com`)
 *   **Planned Future Support:**
-    *   YouTube Live
     *   Twitch
     *   Facebook Live
     *   Other popular platforms (contributions welcome!)
