@@ -32,9 +32,9 @@
     *   Bilibili 直播 (`live.bilibili.com`)
     *   YouTube Live (`youtube.com`)
 *   **计划未来支持:**
-    *   Twitch
-    *   虎牙直播 (`[huya.com](https://www.huya.com/)`)
-    *   斗鱼直播 (`[douyu.com](http://douyu.com/)`)
+    *   Twitch (`twitch.com`)
+    *   虎牙直播 ([huya.com](https://www.huya.com/))
+    *   斗鱼直播 ([douyu.com](https://douyu.com/))
     *   其他流行平台 (欢迎贡献!)
 
 ## 技术栈

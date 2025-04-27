@@ -35,8 +35,8 @@ It consists of two main parts:
     *   Bilibili Live (`live.bilibili.com`)
 *   **Planned Future Support:**
     *   Twitch
-    *   Huya.com (`[huya.com](https://www.huya.com/)`)
-    *   Douyu.com (`[douyu.com](http://douyu.com/)`)
+    *   Huya.com ([huya.com](https://www.huya.com/))
+    *   Douyu.com ([douyu.com](https://douyu.com/))
     *   Other popular platforms (contributions welcome!)
 
 ## Technologies
