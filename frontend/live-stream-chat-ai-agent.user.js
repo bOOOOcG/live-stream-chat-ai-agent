@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      0.10
-// @description  An AI script for automatically sending chat messages and interacting with the streamer on Bilibili live streams. Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
-// @description:zh-CN  一个基于 AI 的脚本，用于在 Bilibili 直播中自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
-// @description:zh-TW  一個基於人工智慧的腳本，用於在 Bilibili 直播中自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
-// @description:zh-HK  一個基於人工智能的腳本，用於在 Bilibili 直播中自動發送聊天室訊息並與主播互動。錄製音訊、彈幕及直播畫面，傳送至後台進行 AI 分析處理，並自動發佈聊天室內容。
+// @version      1.0.0
+// @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
+// @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
+// @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
+// @description:zh-HK  一個基於人工智能的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕及直播畫面，傳送至後台進行 AI 分析處理，並自動發佈聊天室內容。
 // @author       bOc
 // @match        https://live.bilibili.com/*
+// @match        https://www.youtube.com/watch*
 // @grant        none
 // ==/UserScript==
 
@@ -17,12 +18,568 @@
     // --- 常量定义 ---
     const API_ENDPOINT = 'https://your_server_address:8181/upload'; // 后端 API 地址
     const RECORDING_INTERVAL_MS = 30000; // 30 秒 - 录制分块时长
-    const MAX_CHAT_LENGTH = 20; // 每条弹幕消息分段的最大长度
+    const MAX_CHAT_LENGTH = 20; // 每条弹幕消息分段的最大长度 (Bilibili specific, might need adapter)
     const CHAT_SEND_DELAY_MIN_MS = 3000; // 发送弹幕消息之间的最小延迟（毫秒）
     const CHAT_SEND_DELAY_MAX_MS = 6000; // 发送弹幕消息之间的最大延迟（毫秒）
     const SCREENSHOT_WIDTH = 1280; // 期望的截图宽度
     const SCREENSHOT_HEIGHT = 720; // 期望的截图高度
     const SCREENSHOT_QUALITY = 0.9; // 截图 JPEG 质量 (0.0 到 1.0)
+
+    // --- 平台适配器定义 ---
+    const platformAdapters = {
+        bilibili: {
+            platformName: "Bilibili",
+            isApplicable: () => window.location.hostname.includes('live.bilibili.com'),
+
+            /**
+             * 从当前 URL 中提取房间 ID。(Bilibili)
+             * @returns {string|null} 房间 ID，如果找不到则返回 null。
+             */
+            getRoomId: () => {
+                const match = window.location.pathname.match(/\/(\d+)/);
+                return match ? match[1] : null;
+            },
+
+            /**
+             * 在页面上查找视频元素。(Bilibili)
+             * Bilibili 可能使用 <video> 或自定义元素如 <bwp-video>。
+             * @returns {HTMLVideoElement|null} 视频元素或 null。
+             */
+            findVideoElement: () => {
+                // 如果 Bilibili 更改结构，需要调整选择器
+                return document.querySelector('video, bwp-video video');
+            },
+
+            /**
+            * 从 DOM 中收集在最后录制间隔内的弹幕消息。(Bilibili)
+            * @param {number} recordingStartTimestamp - 录制开始时间戳 (ms)
+            * @param {number} recordingEndTimestamp - 录制结束时间戳 (ms)
+            * @returns {Array<object>} 弹幕消息对象的数组。
+            */
+            collectChatMessages: (recordingStartTimestamp, recordingEndTimestamp) => {
+                const newChats = []; // 初始化用于存储新弹幕的数组
+                // 查找弹幕元素，优先使用 .danmaku-item
+                let chatElements = document.querySelectorAll('.danmaku-item');
+
+                // 如果找不到 .danmaku-item，尝试备用选择器 .chat-item
+                if (!chatElements || chatElements.length === 0) {
+                    chatElements = document.querySelectorAll('.chat-item');
+                    if (!chatElements || chatElements.length === 0) {
+                        console.warn("Bilibili 适配器: 找不到聊天元素 (尝试了 .danmaku-item, .chat-item)。聊天收集可能失败。");
+                        return newChats; // 找不到则返回空数组
+                    } else {
+                        // console.log("Bilibili 适配器: 使用备用选择器 '.chat-item' 获取聊天消息。");
+                    }
+                }
+
+                // 将录制开始和结束时间戳从毫秒转换为秒
+                const startSec = Math.floor(recordingStartTimestamp / 1000);
+                const endSec = Math.floor(recordingEndTimestamp / 1000);
+                // 确保结束时间不早于开始时间（处理可能的边界情况）
+                const effectiveEndSec = Math.max(endSec, startSec);
+
+                // 【调试日志】打印请求的时间段（秒）
+                // console.log(`[聊天收集器 - Bilibili] 请求的时间段 (秒): ${startSec} - ${effectiveEndSec}`);
+
+                // 遍历找到的所有聊天元素
+                chatElements.forEach(chatElement => {
+                    let timestamp = null; // 初始化此聊天项的时间戳变量
+                    let timestampAttr = null; // 存储原始时间戳属性字符串，用于调试
+                    let isInTimeWindow = false; // 默认为不在时间窗口内
+
+                    try {
+                        // 尝试获取 data-ts 或 data-timestamp 属性
+                        timestampAttr = chatElement.getAttribute('data-ts') || chatElement.getAttribute('data-timestamp');
+
+                        if (timestampAttr) {
+                            // 解析时间戳字符串为整数
+                            const parsedTimestamp = parseInt(timestampAttr, 10);
+                            // 检查解析是否成功 (不是 NaN)
+                            if (!isNaN(parsedTimestamp)) {
+                                // 如果时间戳看起来像毫秒（非常大），则转换为秒，否则假定已经是秒
+                                timestamp = (parsedTimestamp > 1e12) ? Math.floor(parsedTimestamp / 1000) : parsedTimestamp;
+                                // 检查时间戳是否落在有效的录制时间窗口内
+                                isInTimeWindow = (timestamp >= startSec && timestamp <= effectiveEndSec);
+                            }
+                            // else: 解析为 NaN，timestamp 保持 null，isInTimeWindow 保持 false
+                        }
+                        // else: 元素上没有时间戳属性，timestamp 保持 null，isInTimeWindow 保持 false
+
+                        // 【调试日志】在决定是否跳过之前，记录每条消息的详细信息
+                        // const debugContent = (chatElement.querySelector('.danmaku-item-content') || chatElement).innerText?.slice(0, 50).trim();
+                        // console.log(`[Bili 聊天项] 原始 TS 属性: ${timestampAttr}, 解析秒: ${timestamp}, 在窗口内 (${startSec}-${effectiveEndSec})?: ${isInTimeWindow}, 内容: ${debugContent || 'N/A'}`);
+
+                        // 仅当消息在时间窗口内时才处理
+                        if (isInTimeWindow) {
+                            // 【调试日志】确认包含此消息
+                            // console.log(` -> 包含 (时间戳 ${timestamp} 在 ${startSec}-${effectiveEndSec} 之内)`);
+
+                            // --- 提取弹幕信息 ---
+                            const uid = chatElement.getAttribute('data-uid'); // 获取用户ID
+                            const uname = chatElement.getAttribute('data-uname'); // 获取用户名
+                            // 尝试多种选择器获取弹幕内容节点
+                            const contentNode = chatElement.querySelector('.danmaku-content')
+                                || chatElement.querySelector('.danmaku-item-content')
+                                || chatElement.querySelector('.danmaku-message')
+                                || chatElement; // 最后尝试整个元素
+                            // 获取并清理弹幕文本内容
+                            let content = contentNode ? contentNode.innerText.trim() : null;
+
+                            // B站有时会将用户名作为内容的前缀，尝试移除
+                            if (content && chatElement === contentNode && uname && content.startsWith(uname)) {
+                                content = content.substring(uname.length).replace(/^[:：\s]+/, '').trim();
+                            }
+                            // --- 提取结束 ---
+
+                            // 确保 uid, uname, content 都有效
+                            if (uid && uname && content) {
+                                // 将提取的信息添加到 newChats 数组
+                                newChats.push({
+                                    uname: uname,
+                                    content: content,
+                                    uid: uid,
+                                    platform: 'bilibili', // 标记来源平台
+                                    // 发送我们用于过滤的时间戳（秒）
+                                    timestamp: timestamp
+                                });
+                            } else {
+                                // 如果缺少关键数据，则发出警告（可选）
+                                // console.warn("Bilibili 适配器: 因缺少数据 (uid/uname/content) 跳过聊天项:", { uid, uname, content: content ? '存在' : '缺失', timestamp });
+                            }
+                        } else {
+                            // 【调试日志】说明跳过此消息的原因
+                            // console.log(` -> 跳过 (时间戳 ${timestamp} 在 ${startSec}-${effectiveEndSec} 之外或为 null/无效)`);
+                        }
+                    } catch (e) {
+                        // 捕获并报告处理单个聊天元素时发生的错误
+                        console.error("Bilibili 适配器: 处理聊天元素时出错:", e, chatElement);
+                    }
+                }); // 结束遍历
+
+                // 【调试日志】打印最终收集到的相关聊天消息数量
+                // console.log(`Bilibili 适配器: 为该时间段收集了 ${newChats.length} 条相关聊天消息。`);
+                return newChats; // 返回收集到的聊天消息数组
+            },
+
+            /**
+             * 在 Bilibili 界面中模拟输入和发送弹幕消息。(Bilibili)
+             * @param {string} message - 要发送的消息字符串。
+             * @returns {Promise<string>} 一个 promise，解析为状态字符串 ('success', 'disabled', 'error', 'not_found')。
+             */
+            sendChatMessage: async (message) => {
+                return new Promise((resolve) => {
+                    if (!message) {
+                        console.error("Bilibili Adapter: Cannot send empty message.");
+                        resolve('error');
+                        return;
+                    }
+                    // 权限检查在核心逻辑中进行
+
+                    // 更强兼容性的输入框与按钮选择器
+                    const chatInput =
+                        document.querySelector('.chat-input-panel textarea.chat-input') ||
+                        document.querySelector('textarea.chat-input') ||
+                        document.querySelector('textarea#chat-input-area') || // Another possible ID
+                        document.querySelector('textarea[placeholder*="发个弹幕"]'); // Fallback by placeholder
+
+                    const sendButton =
+                        document.querySelector('button.bl-button.live-skin-highlight-button-bg.send-button') || // More specific send button
+                        document.querySelector('div.bottom-actions button.bl-button--primary') ||
+                        document.querySelector('button.bl-button--primary[type="submit"]') || // Try submit type
+                        document.querySelector('[data-testid="send-button"]'); // Test ID if available
+
+                    if (!chatInput) {
+                        console.error("Bilibili Adapter: Chat input element not found.");
+                        resolve('not_found');
+                        return;
+                    }
+                    if (!sendButton) {
+                        console.error("Bilibili Adapter: Chat send button not found.");
+                        resolve('not_found');
+                        return;
+                    }
+
+                    // 检查按钮是否明确禁用
+                    const isDisabled = sendButton.disabled || sendButton.classList.contains('disabled') || sendButton.classList.contains('bl-button--disabled');
+
+                    if (isDisabled) {
+                        console.warn("Bilibili Adapter: Chat send button is disabled (cooldown?).");
+                        resolve('disabled'); // 特殊状态码，表示按钮禁用
+                        return;
+                    }
+
+                    console.log(`Bilibili Adapter: Attempting to send chat: "${message}"`);
+
+                    try {
+                        const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+                        const changeEvent = new Event('change', { bubbles: true, cancelable: true });
+
+                        chatInput.focus();
+                        chatInput.value = message;
+                        chatInput.dispatchEvent(inputEvent);
+                        chatInput.dispatchEvent(changeEvent);
+
+                        // 短暂延迟后检查按钮状态并点击
+                        setTimeout(() => {
+                            // 再次检查禁用状态，以防在输入后被禁用
+                            const stillEnabled = !sendButton.disabled && !sendButton.classList.contains('disabled') && !sendButton.classList.contains('bl-button--disabled');
+                            if (stillEnabled) {
+                                sendButton.click();
+                                console.log(`Bilibili Adapter: Chat sent successfully (presumably): "${message}"`);
+                                resolve('success');
+                            } else {
+                                console.warn("Bilibili Adapter: Send button became disabled just before clicking.");
+                                resolve('disabled'); // 按钮在最后时刻被禁用
+                            }
+                        }, 150); // 稍作延迟给React等框架反应时间
+
+                    } catch (error) {
+                        console.error("Bilibili Adapter: Error during chat simulation:", error);
+                        resolve('error'); // 模拟过程中出错
+                    }
+                });
+            },
+            // Bilibili 可能需要的其他特定函数
+        },
+
+        youtube: {
+            platformName: "YouTube",
+            isApplicable: () => window.location.hostname.includes('youtube.com') && window.location.pathname.startsWith('/watch'),
+
+            /**
+             * 从页面同步提取 YouTube 频道用户名或ID。
+             * 支持 href="/@username" 和 href="/channel/UCxxx"。
+             * 如果一开始取不到，会挂一个 setTimeout 重试。
+             * @returns {string|null}
+             */
+            getRoomId: (() => {
+                let cachedRoomId = null;
+                let retries = 0;
+                const maxRetries = 10;
+                const retryInterval = 500; // ms
+
+                const selectors = [
+                    '#upload-info ytd-channel-name a[href^="/@"]',
+                    '#upload-info ytd-channel-name a[href^="/channel/"]',
+                    'ytd-channel-name a[href^="/@"]',
+                    'ytd-channel-name a[href^="/channel/"]',
+                ];
+
+                function tryFindRoomId() {
+                    const link = selectors
+                        .map(sel => document.querySelector(sel))
+                        .find(el => el !== null);
+
+                    if (link) {
+                        const href = link.getAttribute('href');
+                        let match = href.match(/^\/@([^/]+)/) || href.match(/^\/channel\/([^/]+)/);
+                        if (match) {
+                            console.log("YouTube Adapter: Found channel ID/username:", match[1]);
+                            cachedRoomId = match[1];
+                            return;
+                        }
+                    }
+
+                    if (retries < maxRetries) {
+                        retries++;
+                        console.log(`YouTube Adapter: Retry finding channel ID/username (${retries}/${maxRetries})...`);
+                        setTimeout(tryFindRoomId, retryInterval);
+                    } else {
+                        console.error("YouTube Adapter: Failed to find channel ID/username after retries.");
+                    }
+                }
+
+                setTimeout(tryFindRoomId, 0);
+
+                return () => cachedRoomId;
+            })(),
+
+            /**
+             * 在页面上查找视频元素。(YouTube)
+             * @returns {HTMLVideoElement|null} 视频元素或 null。
+             */
+            findVideoElement: () => {
+                // YouTube 主要视频播放器通常的选择器
+                const video = document.querySelector('#movie_player video.html5-main-video');
+                if (!video) {
+                    console.warn("YouTube Adapter: Could not find primary video element (#movie_player video.html5-main-video).");
+                }
+                return video;
+            },
+
+            /**
+             * 从 DOM 中收集在最后录制间隔内的聊天消息。(YouTube)
+             * @param {number} recordingStartTimestamp - 录制开始时间戳 (ms)
+             * @param {number} recordingEndTimestamp - 录制结束时间戳 (ms)
+             * @returns {Array<object>} 聊天消息对象的数组
+             */
+            collectChatMessages: (recordingStartTimestamp, recordingEndTimestamp) => {
+                const newChats = [];
+                const startSecYt = Math.floor(recordingStartTimestamp / 1000); // 仍然计算秒级，可能用于输出
+                const endSecYt = Math.floor(recordingEndTimestamp / 1000);
+                const effectiveEndSecYt = Math.max(endSecYt, startSecYt);
+
+                const iframe = document.querySelector('iframe#chatframe');
+                if (!iframe) { console.warn("YouTube 适配器: 未找到聊天 iframe (#chatframe)。"); return newChats; }
+                const chatDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                if (!chatDoc) { console.warn("YouTube 适配器: 无法访问聊天 iframe 文档。"); return newChats; }
+
+                // --- 1. 生成允许的时间字符串集合 ---
+                const allowedVisibleTimestamps = new Set();
+                try {
+                    const startDate = new Date(recordingStartTimestamp);
+                    const endDate = new Date(recordingEndTimestamp);
+
+                    // 将开始时间调回到该分钟的开始 (0 秒, 0 毫秒)
+                    let currentMinuteDate = new Date(startDate);
+                    currentMinuteDate.setSeconds(0, 0);
+
+                    // 获取结束时间对应的分钟的开始时间戳，用于循环比较
+                    let endMinuteStartTimestamp = new Date(endDate);
+                    endMinuteStartTimestamp.setSeconds(0, 0);
+                    endMinuteStartTimestamp = endMinuteStartTimestamp.getTime();
+
+                    // 循环生成从开始分钟到结束分钟的所有时间字符串
+                    let iterations = 0; // 防止无限循环
+                    const maxIterations = 1440; // 一天最多1440分钟
+
+                    while (currentMinuteDate.getTime() <= endMinuteStartTimestamp && iterations < maxIterations) {
+                        // 格式化时间，需要精确匹配 YouTube 的格式，注意 AM/PM 和可能存在的特殊空格
+                        // 'en-US' 通常能得到 AM/PM 格式。 'narrowSymbol' (U+202F) 可能需要手动处理或正则替换
+                        const options = { hour: 'numeric', minute: '2-digit', hour12: true };
+                        let visibleStr = currentMinuteDate.toLocaleTimeString('en-US', options);
+                        // 尝试标准化：去除多余空格并将 PM/AM 转为大写 (如果需要)
+                        visibleStr = visibleStr.replace(/\s+/g, ' ').replace(/ (AM|PM)$/i, (match, p1) => ' ' + p1.toUpperCase());
+                        // 特殊处理一下你例子中的特殊空格 U+202F (NARROW NO-BREAK SPACE)
+                        visibleStr = visibleStr.replace(/[\u202F]/g, ' '); // 将特殊空格替换为普通空格
+                        visibleStr = visibleStr.trim(); // 最后清理
+
+                        allowedVisibleTimestamps.add(visibleStr);
+
+                        // 前进一分钟
+                        currentMinuteDate.setMinutes(currentMinuteDate.getMinutes() + 1);
+                        iterations++;
+                    }
+                    if (iterations >= maxIterations) {
+                        console.warn("YouTube 时间戳生成循环次数过多，可能存在问题。");
+                    }
+                    // console.log("[YT 计算] 允许的可见时间戳:", allowedVisibleTimestamps);
+
+                } catch (err) {
+                    console.error("[YT 错误] 生成允许的时间戳集合时出错:", err);
+                    // 如果出错，则不进行过滤，收集所有消息（或返回空，取决于策略）
+                    // 为了安全起见，这里返回空，避免发送错误数据
+                    return newChats;
+                }
+
+                // 如果集合为空（可能开始结束时间相同且正好在分钟边界），至少加入开始时间对应的那个
+                if (allowedVisibleTimestamps.size === 0) {
+                    try {
+                        const startDate = new Date(recordingStartTimestamp);
+                        const options = { hour: 'numeric', minute: '2-digit', hour12: true };
+                        let visibleStr = startDate.toLocaleTimeString('en-US', options);
+                        visibleStr = visibleStr.replace(/\s+/g, ' ').replace(/ (AM|PM)$/i, (match, p1) => ' ' + p1.toUpperCase());
+                        visibleStr = visibleStr.replace(/[\u202F]/g, ' ');
+                        visibleStr = visibleStr.trim();
+                        allowedVisibleTimestamps.add(visibleStr);
+                        // console.log("[YT 计算] 集合为空，添加开始时间戳:", allowedVisibleTimestamps);
+                    } catch (e) { /* Failsafe */ }
+                }
+
+                const chatItems = chatDoc.querySelectorAll(
+                    'yt-live-chat-text-message-renderer, ' +
+                    'yt-live-chat-paid-message-renderer, ' +
+                    'yt-live-chat-paid-sticker-renderer, ' +
+                    'yt-live-chat-membership-item-renderer'
+                );
+
+                chatItems.forEach((el, index) => {
+                    let isAllowed = false;
+                    let messageVisibleStr = '';
+                    try {
+                        // --- 2. 获取消息的可见时间戳 ---
+                        const timestampSpan = el.querySelector('#timestamp');
+                        if (timestampSpan) {
+                            messageVisibleStr = timestampSpan.textContent.trim();
+                            // 标准化处理，使其与我们生成的格式一致
+                            messageVisibleStr = messageVisibleStr.replace(/\s+/g, ' '); // 替换各种空白为普通空格
+                            messageVisibleStr = messageVisibleStr.replace(/[\u202F]/g, ' '); // 处理特殊空格 U+202F
+                            messageVisibleStr = messageVisibleStr.replace(/ (AM|PM)$/i, (match, p1) => ' ' + p1.toUpperCase());
+                            messageVisibleStr = messageVisibleStr.trim(); // 最后清理
+
+                            // --- 3. 检查时间戳是否在允许的集合中 ---
+                            isAllowed = allowedVisibleTimestamps.has(messageVisibleStr);
+                            console.log(`[YT 聊天项 #${index}] 可见时间: "${messageVisibleStr}", 在允许集合 (${[...allowedVisibleTimestamps].join(',')}) 中?: ${isAllowed}`);
+                        } else {
+                            console.log(`[YT 聊天项 #${index}] 找不到可见时间戳 span#timestamp`);
+                        }
+
+                        if (isAllowed) {
+                            console.log(`          -> 包含此消息 (基于可见时间)`);
+                            const authorName = el.querySelector('#author-name')?.textContent.trim() || '未知';
+                            let message = '';
+                            // ... (提取 message 的逻辑不变，和之前的版本一样) ...
+                            if (el.matches('yt-live-chat-text-message-renderer')) {
+                                const messageSpan = el.querySelector('#message');
+                                if (messageSpan) {
+                                    message = Array.from(messageSpan.childNodes).map(node => {
+                                        if (node.nodeType === Node.TEXT_NODE) { return node.textContent.trim(); }
+                                        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG') {
+                                            const alt = node.getAttribute('alt')?.trim() ?? '表情'; return `[${alt}]`;
+                                        } return '';
+                                    }).join(' ').replace(/\s+/g, ' ').trim();
+                                }
+                            } else if (el.matches('yt-live-chat-paid-message-renderer')) {
+                                const price = el.querySelector('#purchase-amount')?.textContent.trim() || '';
+                                const paidMsg = el.querySelector('#message')?.innerText.trim() || '(无留言)';
+                                message = `[SuperChat ${price}] ${paidMsg}`;
+                            } else if (el.matches('yt-live-chat-paid-sticker-renderer')) {
+                                const price = el.querySelector('#purchase-amount')?.textContent.trim() || '';
+                                message = `[SuperSticker ${price}] [发送了超级贴图]`;
+                            } else if (el.matches('yt-live-chat-membership-item-renderer')) {
+                                const giftText = el.innerText.trim();
+                                message = `[会员消息] ${giftText}`;
+                            } else {
+                                return; // 跳过未知类型
+                            }
+
+                            if (authorName && message) {
+                                newChats.push({
+                                    uname: authorName,
+                                    content: message,
+                                    platform: 'youtube',
+                                    // --- 4. 输出时间戳：使用粗略的开始秒数作为占位符 ---
+                                    timestamp: startSecYt
+                                });
+                            }
+                        } else {
+                            // console.log(`          -> 跳过 (可见时间 "${messageVisibleStr}" 不在允许集合中)`);
+                        }
+                    } catch (err) {
+                        console.error(`[YT 聊天项 #${index}] 处理出错:`, err, el);
+                    }
+                }); // 结束遍历
+
+                // console.log(`[YT 结果] 本次使用可见时间戳收集到 ${newChats.length} 条相关聊天消息。`);
+                return newChats;
+            },
+
+            /**
+             * 在 YouTube 界面中模拟输入和发送聊天消息。(YouTube)
+             * @param {string} message - 要发送的消息字符串。
+             * @returns {Promise<string>} 一个 promise，解析为状态字符串 ('success', 'disabled', 'error', 'not_found')
+             */
+            sendChatMessage: async (message) => {
+                try {
+                    const iframe = document.querySelector('iframe#chatframe');
+                    if (!iframe) {
+                        console.error("YouTube Adapter: Chat iframe (#chatframe) not found.");
+                        return 'not_found';
+                    }
+
+                    const chatDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                    if (!chatDoc) {
+                        console.error("YouTube Adapter: Cannot access chat iframe document.");
+                        return 'not_found';
+                    }
+
+                    const inputRenderer = chatDoc.querySelector('yt-live-chat-text-input-field-renderer#input');
+                    if (!inputRenderer) {
+                        console.error("YouTube Adapter: Chat input renderer not found inside iframe.");
+                        return 'not_found';
+                    }
+
+                    const chatInput = inputRenderer.shadowRoot?.querySelector('div#input[contenteditable]')
+                        || inputRenderer.querySelector('div#input[contenteditable]');
+                    if (!chatInput) {
+                        console.error("YouTube Adapter: Contenteditable input not found.");
+                        return 'not_found';
+                    }
+
+                    if (chatInput.offsetParent === null) {
+                        console.warn("YouTube Adapter: Chat input is hidden or disabled.");
+                        return 'disabled';
+                    }
+
+                    // 输入文字
+                    chatInput.focus();
+                    chatInput.innerText = message;
+
+                    chatInput.dispatchEvent(new InputEvent('input', {
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: message
+                    }));
+
+                    console.log(`YouTube Adapter: Message "${message}" inputted, waiting for button to enable...`);
+
+                    // 等待发送按钮
+                    return await new Promise((resolve) => {
+                        setTimeout(() => {
+                            const sendButton = chatDoc.querySelector('yt-live-chat-message-input-renderer yt-button-renderer button');
+                            if (!sendButton) {
+                                console.error("YouTube Adapter: Send button not found.");
+                                resolve('not_found');
+                                return;
+                            }
+
+                            if (sendButton.disabled) {
+                                console.warn("YouTube Adapter: Send button is still disabled.");
+                                resolve('disabled');
+                                return;
+                            }
+
+                            sendButton.click();
+                            console.log(`YouTube Adapter: Chat message sent successfully: "${message}"`);
+                            resolve('success');
+                        }, 150); // 延迟150ms，保证按钮状态刷新
+                    });
+
+                } catch (err) {
+                    console.error("YouTube Adapter: Error sending chat message", err);
+                    return 'error';
+                }
+            },
+            // YouTube 的其他特定函数
+        }
+        // Add more platforms here if needed
+    };
+
+    /**
+     * 检查当前 YouTube 页面是否正在直播。
+     * 包含对标准直播徽章、首映指示器和时间显示类的检查。
+     * @returns {boolean} 如果确定是直播则返回 true，否则（如 VOD、首映等待室等）返回 false。
+     */
+    function isYouTubeLiveNow() {
+
+        // 原始的时间显示类检查 (备用)
+        const timeDisplay = document.querySelector('.ytp-time-display');
+        if (timeDisplay && timeDisplay.classList.contains('ytp-live')) {
+            console.log("YT Live Check: 在时间显示上找到 'ytp-live' 类。");
+            return true;
+        }
+
+        // 明确的首映指示器 (意味着还未直播或已结束)
+        const premiereTextElement = document.querySelector('.ytp-paid-content-overlay-text, .ytp-title-subtext'); // 检查覆盖层和副标题
+        if (premiereTextElement) {
+            const premiereText = premiereTextElement.textContent?.toUpperCase();
+            if (premiereText && (premiereText.includes('PREMIERE') || premiereText.includes('首播') || premiereText.includes('UPCOMING'))) {
+                console.log("YT Live Check: 找到首映或即将播放指示器。");
+                return false; // 如果是首映/即将播放，肯定不是直播
+            }
+        }
+
+        // 特别查找控制栏中的红色 "LIVE" 圆点指示器
+        const liveControlDot = document.querySelector('.ytp-chrome-controls .ytp-live-badge[disabled="false"] .ytp-menuitem-toggle-checkbox');
+        if (liveControlDot) {
+            console.log("YT Live Check: 找到直播控制圆点指示器。");
+            return true;
+        }
+
+        console.log("YT Live Check: 未找到明确的直播指示器。假设是 VOD 或首映。");
+        return false; // 如果没找到明确指示，则默认为 false
+    }
 
     // --- 状态变量 ---
     let audioContext; // AudioContext 实例
@@ -56,325 +613,560 @@
     let runButton; // 运行/停止按钮元素的引用 (改名)
     let panel; // 主 UI 面板的引用
 
-    // --- 初始化 ---
-    const roomId = getRoomId();
-    if (!roomId) {
-        console.error("AI Agent: Could not determine Room ID.");
-        return; // 如果找不到房间 ID，则停止脚本执行
-    }
-    console.log(`AI Agent: Initialized for Room ID: ${roomId}`);
+    // --- 初始化 & 平台检测 ---
+    let currentPlatformAdapter = null;
+    let roomId = null; // 将 roomId 初始化为 null
 
-    createControlPanel(); // 创建控制面板
-    observeVideoElement(); // 开始观察视频元素的出现
+    // 循环遍历适配器以找到匹配的
+    for (const platformKey in platformAdapters) {
+        const adapter = platformAdapters[platformKey];
+        if (adapter.isApplicable()) {
+            let shouldUseAdapter = true; // 假设可用，除非另有证明
+
+            // **针对 YouTube 的特殊逻辑**
+            if (platformKey === 'youtube') {
+                // 确保 isYouTubeLiveNow 函数已经定义在前面
+                if (typeof isYouTubeLiveNow !== 'function') {
+                    console.error("AI Agent Error: isYouTubeLiveNow function is not defined yet!");
+                    shouldUseAdapter = false; // 不能检查，就假设不可用
+                } else if (!isYouTubeLiveNow()) { // 调用函数检查是否真的是直播
+                    shouldUseAdapter = false; // 是 YouTube 但不是直播
+                    console.log(`AI Agent (${adapter.platformName}): 检测到页面，但当前不是直播 (VOD/首映)。代理将不会激活。`);
+                } else {
+                    console.log(`AI Agent (${adapter.platformName}): 检测到直播流。继续激活。`);
+                    // 是 YouTube 并且是直播，shouldUseAdapter 保持 true
+                }
+            }
+
+            // 如果平台确认可用 (Bilibili, 或 YouTube 直播)
+            if (shouldUseAdapter) {
+                currentPlatformAdapter = adapter;
+                console.log(`AI Agent: 为平台激活: ${currentPlatformAdapter.platformName}`);
+                break; // 找到可用适配器后停止搜索
+            }
+            // 如果是 YouTube VOD，shouldUseAdapter 为 false，循环继续（但不会找到其他匹配项）
+        }
+    }
+
+    // 仅在找到有效的平台适配器时继续执行脚本的其余部分
+    // --- 条件初始化 ---
+    if (currentPlatformAdapter) {
+
+        // 改成异步等待roomId成功
+        waitForRoomId(currentPlatformAdapter, 10, 500).then(resolvedRoomId => { // <-- 把参数名改成 resolvedRoomId，避免混淆
+            if (!resolvedRoomId) {
+                console.error(`AI Agent (${currentPlatformAdapter.platformName}): 最终仍无法确定房间/视频 ID。代理可能无法正常工作。`);
+                // 这里可以选择不加载UI，或者加载但禁用启动按钮，取决于你的需求
+            } else {
+                console.log(`AI Agent (${currentPlatformAdapter.platformName}): 为房间/视频 ID 初始化: ${resolvedRoomId}`);
+                // !!! 添加这一行，把获取到的 ID 赋值给全局变量 !!!
+                roomId = resolvedRoomId;
+                console.log("全局 roomId 已更新为:", roomId); // 添加确认日志
+            }
+
+            // 无论是否成功拿到roomId，都继续加载UI
+            createControlPanel(); // 创建控制面板
+            observeVideoElement(); // 开始观察视频元素
+
+        });
+
+    } else {
+        console.log("AI Agent: 未检测到适用的直播平台或未满足必要条件。脚本将不会注入 UI 或激活。");
+        return;
+    }
+
+    /**
+     * 辅助函数：等待平台适配器能拿到有效的 roomId
+     * @param {object} adapter 当前平台适配器
+     * @param {number} maxRetries 最大重试次数
+     * @param {number} intervalMs 每次重试的间隔 (毫秒)
+     * @returns {Promise<string|null>} 成功返回roomId，失败返回null
+     */
+    function waitForRoomId(adapter, maxRetries = 10, intervalMs = 500) {
+        return new Promise(resolve => {
+            let attempts = 0;
+
+            const tryFetch = () => {
+                const id = adapter.getRoomId();
+                if (id) {
+                    resolve(id);
+                } else if (attempts >= maxRetries) {
+                    resolve(null);
+                } else {
+                    attempts++;
+                    console.warn(`YouTube Adapter: Retry finding channel username (${attempts}/${maxRetries})...`);
+                    setTimeout(tryFetch, intervalMs);
+                }
+            };
+
+            tryFetch();
+        });
+    }
 
     // --- 函数 ---
 
     /**
-     * 从当前 URL 中提取房间 ID。
-     * @returns {string|null} 房间 ID，如果找不到则返回 null。
-     */
-    function getRoomId() {
-        const match = window.location.pathname.match(/\/(\d+)/);
-        return match ? match[1] : null;
-    }
-
-    /**
-     * 创建控制面板 UI 并注入到页面中。
-     */
+         * 创建控制面板 UI 并注入到页面中（使用 DOM 操作方法构建，兼容 Trusted Types）。
+         */
     function createControlPanel() {
-        // --- 注入样式 ---
+        console.log("AI Agent: 开始创建控制面板...");
+
+        // --- 1. 注入样式 ---
         const style = document.createElement('style');
         style.textContent = `
-        /* --- UI 面板样式 --- */
-        .auto-chat-ai-panel {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            width: 240px;
-            background-color: rgba(245, 245, 245, 0.55);
-            backdrop-filter: blur(6px);
-            border-radius: 12px;
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-            font-family: Arial, sans-serif;
-            z-index: 10000;
-            user-select: none;
-            overflow: visible; /* ← 允许 tooltip 溢出 */
-        }
-        .panel-header {
-            padding: 12px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background-color: rgba(255, 255, 255, 0.95);
-            cursor: grab;
-            border-top-left-radius: 12px;
-            border-top-right-radius: 12px;
-        }
-        .panel-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #222;
-        }
-        .panel-menu {
-            cursor: pointer;
-            font-size: 18px;
-            color: #444;
-        }
-        .panel-content {
-            padding: 16px;
-            background-color: rgba(245, 245, 245, 0.55);
-            border-bottom-left-radius: 12px;   /* ← 给底部圆角 */
-            border-bottom-right-radius: 12px;  /* ← 同上 */
-        }
-        .control-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 18px;
-        }
-        .control-label {
-            font-size: 14px;
-            color: #444;
-            margin-right: 10px;
-        }
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 40px;
-            height: 20px;
-        }
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        .slider-switch {
-            position: absolute;
-            cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: #ccc;
-            transition: background-color 0.3s, transform 0.2s ease-in-out;
-            border-radius: 20px;
-        }
-        .slider-switch:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 2px;
-            bottom: 2px;
-            background-color: white;
-            transition: transform 0.2s ease-in-out;
-            border-radius: 50%;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-        }
-        input:checked + .slider-switch {
-            background-color: #4285f4;
-        }
-        input:checked + .slider-switch:before {
-            transform: translateX(20px);
-        }
-        .volume-slider {
-            width: 100%;
-            margin-top: 8px;
-            appearance: none;
-            height: 4px;
-            background: #bbb;
-            border-radius: 2px;
-        }
-        .volume-slider:hover {
-            opacity: 1;
-        }
-        .volume-slider::-webkit-slider-thumb,
-        .volume-slider::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            background: #4285f4;
-            cursor: pointer;
-            border-radius: 50%;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-        }
-        .run-button {
-            width: 100%;
-            padding: 12px 16px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 24px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            margin-top: 10px;
-            transition: background-color 0.2s;
-        }
-        .run-button.running {
-            background-color: #ea4335;
-        }
-        .run-button:disabled {
-            background-color: #9ca3af;
-            cursor: not-allowed;
-        }
+    /* --- UI 面板样式 (省略，与之前相同) --- */
+    /* --- UI 面板样式 --- */
+    .auto-chat-ai-panel {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        width: 240px;
+        background-color: rgba(245, 245, 245, 0.55);
+        backdrop-filter: blur(6px);
+        border-radius: 12px;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        font-family: Arial, sans-serif;
+        z-index: 10000;
+        user-select: none;
+        overflow: visible; /* ← 允许 tooltip 溢出 */
+    }
+    .panel-header {
+        padding: 12px 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: rgba(255, 255, 255, 0.95);
+        cursor: grab;
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+    }
+    .panel-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #222;
+    }
+    .panel-menu {
+        cursor: pointer;
+        font-size: 18px;
+        color: #444;
+    }
+    .panel-content {
+        padding: 16px;
+        background-color: rgba(245, 245, 245, 0.55);
+        border-bottom-left-radius: 12px;   /* ← 给底部圆角 */
+        border-bottom-right-radius: 12px;  /* ← 同上 */
+    }
+    .control-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 18px;
+    }
+    .control-label {
+        font-size: 14px;
+        color: #444;
+        margin-right: 10px;
+        display: flex; /* 为了让 tooltip icon 和文字在同一行 */
+        align-items: center; /* 垂直居中 tooltip icon */
+    }
+    .switch {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 20px;
+    }
+    .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    .slider-switch {
+        position: absolute;
+        cursor: pointer;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: #ccc;
+        transition: background-color 0.3s, transform 0.2s ease-in-out;
+        border-radius: 20px;
+    }
+    .slider-switch:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        transition: transform 0.2s ease-in-out;
+        border-radius: 50%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    input:checked + .slider-switch {
+        background-color: #4285f4;
+    }
+    input:checked + .slider-switch:before {
+        transform: translateX(20px);
+    }
+    .volume-slider {
+        width: 100%;
+        margin-top: 8px;
+        appearance: none;
+        height: 4px;
+        background: #bbb;
+        border-radius: 2px;
+        cursor: pointer; /* Add cursor */
+    }
+    .volume-slider::-webkit-slider-thumb {
+        appearance: none; /* Override default look */
+        width: 16px;
+        height: 16px;
+        background: #4285f4;
+        cursor: pointer;
+        border-radius: 50%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .volume-slider::-moz-range-thumb { /* Firefox thumb styles */
+        width: 16px;
+        height: 16px;
+        background: #4285f4;
+        cursor: pointer;
+        border-radius: 50%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        border: none; /* Remove default border in FF */
+    }
+    .run-button {
+        width: 100%;
+        padding: 12px 16px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 24px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        margin-top: 10px;
+        transition: background-color 0.2s;
+    }
+    .run-button.running {
+        background-color: #ea4335;
+    }
+    .run-button:disabled {
+        background-color: #9ca3af;
+        cursor: not-allowed;
+    }
 
-        /* --- Tooltip --- */
-        .tooltip-container {
-            position: relative;
-            display: inline-block;
-        }
-        .tooltip-icon {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            background-color: #888;
-            color: #fff;
-            font-size: 12px;
-            font-weight: bold;
-            border-radius: 50%;
-            text-align: center;
-            line-height: 16px;
-            margin-left: 4px;
-            cursor: help;
-            transition: background-color 0.2s;
-        }
-        .tooltip-icon:hover {
-            background-color: #555;
-        }
-        .tooltip-text {
-            visibility: hidden;
-            width: max-content;
-            max-width: 200px;
-            background-color: #333;
-            color: #fff;
-            text-align: left;
-            padding: 6px 10px;
-            border-radius: 6px;
-            font-size: 12px;
-            line-height: 1.4;
-            position: absolute;
-            z-index: 10001;
-            bottom: 125%;
-            left: 50%;
-            transform: translateX(-50%);
-            opacity: 0;
-            transition: opacity 0.2s ease-in-out;
-            white-space: pre-line;
-        }
-        .tooltip-container:hover .tooltip-text {
-            visibility: visible;
-            opacity: 1;
-        }
+    /* --- Tooltip --- */
+    .tooltip-container {
+        position: relative;
+        display: inline-flex; /* 更适合与文字混排 */
+        align-items: center; /* 垂直居中 */
+        margin-left: 4px; /* 与文字的间距 */
+    }
+    .tooltip-icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        background-color: #888;
+        color: #fff;
+        font-size: 12px;
+        font-weight: bold;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 16px; /* 使 '!' 居中 */
+        cursor: help;
+        transition: background-color 0.2s;
+    }
+    .tooltip-icon:hover {
+        background-color: #555;
+    }
+    .tooltip-text {
+        visibility: hidden;
+        width: max-content;
+        max-width: 200px;
+        background-color: #333;
+        color: #fff;
+        text-align: left;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.4;
+        position: absolute;
+        z-index: 10001; /* 确保在面板最上方 */
+        bottom: 125%; /* 定位在图标上方 */
+        left: 50%;
+        transform: translateX(-50%);
+        opacity: 0;
+        transition: opacity 0.2s ease-in-out;
+        white-space: pre-line; /* 让 \n 生效 */
+        pointer-events: none; /* 避免 tooltip 自身阻挡鼠标事件 */
+    }
+    .tooltip-container:hover .tooltip-text {
+        visibility: visible;
+        opacity: 1;
+    }
     `;
-        document.head.appendChild(style);
+        try {
+            document.head.appendChild(style);
+            console.log("AI Agent: 样式注入成功。");
+        } catch (e) {
+            console.error("AI Agent: 注入样式失败:", e);
+            return; // 样式注入失败则不继续
+        }
 
-        // --- 构建面板 ---
+        // --- 2. 构建面板 DOM 结构 ---
         panel = document.createElement('div');
         panel.className = 'auto-chat-ai-panel';
-        panel.innerHTML = `
-        <div class="panel-header">
-            <span class="panel-title">Live Stream Chat Agent</span>
-            <span class="panel-menu" title="Menu">⋮</span>
-        </div>
-        <div class="panel-content">
-            <div class="control-item">
-                <span class="control-label">Control</span>
-                <label class="switch">
-                    <input type="checkbox" id="main-switch">
-                    <span class="slider-switch"></span>
-                </label>
-            </div>
-            <div class="control-item">
-                <span class="control-label">Chat Permission</span>
-                <label class="switch">
-                    <input type="checkbox" id="chat-permission">
-                    <span class="slider-switch"></span>
-                </label>
-            </div>
-            <div class="control-item">
-                <span class="control-label">
-                    Mute
-                    <span class="tooltip-container">
-                        <span class="tooltip-icon">!</span>
-                        <span class="tooltip-text">Does not affect AI Agent operation.</span>
-                    </span>
-                </span>
-                <label class="switch">
-                    <input type="checkbox" id="mute-audio">
-                    <span class="slider-switch"></span>
-                </label>
-            </div>
-            <div class="control-item">
-                <span class="control-label">
-                    Volume
-                    <span class="tooltip-container">
-                        <span class="tooltip-icon">!</span>
-                        <span class="tooltip-text">Does not affect AI Agent operation.</span>
-                    </span>
-                </span>
-            </div>
-            <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="50">
-            <button id="run-button" class="run-button" disabled>Start</button>
-        </div>
-    `;
-        document.body.appendChild(panel);
 
-        // --- 绑定元素 ---
+        // -- 创建 Header --
+        const header = document.createElement('div');
+        header.className = 'panel-header';
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'panel-title';
+        titleSpan.textContent = `${currentPlatformAdapter.platformName} Chat Agent`; // 使用适配器获取平台名称
+
+        const menuSpan = document.createElement('span');
+        menuSpan.className = 'panel-menu';
+        menuSpan.textContent = '⋮'; // 使用 Unicode 垂直省略号字符
+        menuSpan.title = 'Menu'; // 鼠标悬浮提示
+
+        header.appendChild(titleSpan);
+        header.appendChild(menuSpan);
+        panel.appendChild(header);
+
+        // -- 创建 Content --
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'panel-content';
+
+        // 辅助函数：创建开关控件
+        function createSwitchControl(id, labelText) {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'control-item';
+
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'control-label';
+            labelSpan.textContent = labelText;
+
+            const switchLabel = document.createElement('label');
+            switchLabel.className = 'switch';
+
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = id;
+
+            const sliderSpan = document.createElement('span');
+            sliderSpan.className = 'slider-switch';
+
+            switchLabel.appendChild(input);
+            switchLabel.appendChild(sliderSpan);
+
+            itemDiv.appendChild(labelSpan);
+            itemDiv.appendChild(switchLabel);
+            return itemDiv;
+        }
+
+        // 辅助函数：创建带 Tooltip 的标签
+        function createLabelWithTooltip(labelText, tooltipText) {
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'control-label';
+            labelSpan.appendChild(document.createTextNode(labelText + ' ')); // 添加文本节点和空格
+
+            const tooltipContainer = document.createElement('span');
+            tooltipContainer.className = 'tooltip-container';
+
+            const tooltipIcon = document.createElement('span');
+            tooltipIcon.className = 'tooltip-icon';
+            tooltipIcon.textContent = '!';
+
+            const tooltipSpan = document.createElement('span');
+            tooltipSpan.className = 'tooltip-text';
+            tooltipSpan.textContent = tooltipText;
+
+            tooltipContainer.appendChild(tooltipIcon);
+            tooltipContainer.appendChild(tooltipSpan);
+            labelSpan.appendChild(tooltipContainer);
+
+            return labelSpan;
+        }
+
+        // -- 添加控件 --
+        // 主控制开关
+        contentDiv.appendChild(createSwitchControl('main-switch', 'Control')); // 使用中文标签
+
+        // 聊天权限开关
+        contentDiv.appendChild(createSwitchControl('chat-permission', 'Chat Permission')); // 使用中文标签
+
+        // 静音开关 (带 Tooltip)
+        const muteItemDiv = document.createElement('div');
+        muteItemDiv.className = 'control-item';
+        const muteLabel = createLabelWithTooltip('Mute', 'Does not affect AI Agent operation.');
+        const muteSwitchLabel = document.createElement('label');
+        muteSwitchLabel.className = 'switch';
+        const muteInput = document.createElement('input');
+        muteInput.type = 'checkbox';
+        muteInput.id = 'mute-audio';
+        const muteSliderSpan = document.createElement('span');
+        muteSliderSpan.className = 'slider-switch';
+        muteSwitchLabel.appendChild(muteInput);
+        muteSwitchLabel.appendChild(muteSliderSpan);
+        muteItemDiv.appendChild(muteLabel);
+        muteItemDiv.appendChild(muteSwitchLabel);
+        contentDiv.appendChild(muteItemDiv);
+
+        // 音量滑块 (带 Tooltip)
+        const volumeItemDiv = document.createElement('div');
+        volumeItemDiv.className = 'control-item';
+        volumeItemDiv.style.flexDirection = 'column';
+        volumeItemDiv.style.alignItems = 'flex-start'; // 左对齐
+        const volumeLabel = createLabelWithTooltip('Volume', 'Does not affect AI Agent operation.');
+        volumeLabel.style.marginBottom = '5px'; // 添加下边距
+        const volSlider = document.createElement('input');
+        volSlider.type = 'range';
+        volSlider.id = 'volume-slider';
+        volSlider.className = 'volume-slider';
+        volSlider.min = '0';
+        volSlider.max = '100';
+        volSlider.value = '50'; // 默认值
+        volumeItemDiv.appendChild(volumeLabel);
+        volumeItemDiv.appendChild(volSlider);
+        contentDiv.appendChild(volumeItemDiv);
+
+        // 运行/停止按钮
+        runButton = document.createElement('button'); // 直接赋值给全局变量
+        runButton.id = 'run-button';
+        runButton.className = 'run-button';
+        runButton.textContent = 'Start'; // 中文标签
+        runButton.disabled = true; // 初始禁用
+        contentDiv.appendChild(runButton);
+
+        panel.appendChild(contentDiv);
+
+        // --- 3. 将面板添加到页面 ---
+        try {
+            document.body.appendChild(panel);
+            console.log("AI Agent: 控制面板成功添加到页面 Body。");
+        } catch (e) {
+            console.error("AI Agent: 添加面板到 Body 时出错:", e);
+            // 失败时尝试移除可能部分添加的元素
+            try { style.remove(); } catch (removeErr) { }
+            try { panel.remove(); } catch (removeErr) { }
+            return; // 添加失败则停止
+        }
+
+        // --- 4. 绑定元素引用和事件监听器 ---
+        // Query elements *after* appending the panel
         const mainSwitch = panel.querySelector('#main-switch');
         const chatPermissionSwitch = panel.querySelector('#chat-permission');
         const muteAudioSwitch = panel.querySelector('#mute-audio');
-        volumeSlider = panel.querySelector('#volume-slider');
-        runButton = panel.querySelector('#run-button');
+        volumeSlider = panel.querySelector('#volume-slider'); // 赋值给全局变量
+        // runButton 已经在上面创建时赋值
 
-        // --- 事件监听 ---
+        // 检查元素是否都找到了
+        if (!mainSwitch || !chatPermissionSwitch || !muteAudioSwitch || !volumeSlider || !runButton || !header) {
+            console.error("AI Agent: 未能在面板中找到一个或多个必要的控制元素！");
+            try { panel.remove(); } catch (removeErr) { } // 移除面板
+            try { style.remove(); } catch (removeErr) { } // 移除样式
+            return;
+        }
+        console.log("AI Agent: 成功获取所有控制元素引用。");
+
+        // --- 添加事件监听 ---
+        console.log("AI Agent: 开始绑定事件监听器...");
         mainSwitch.addEventListener('change', () => {
             isMainSwitchOn = mainSwitch.checked;
-            runButton.disabled = !isMainSwitchOn;
-            if (!isMainSwitchOn && isAgentRunning) stopAgent();
+            console.log("主控制开关状态:", isMainSwitchOn);
+            // 只有当主开关打开且视频元素存在时，才启用运行按钮
+            const videoElement = currentPlatformAdapter?.findVideoElement();
+            runButton.disabled = !(isMainSwitchOn && !!videoElement);
+            console.log("运行按钮禁用状态:", runButton.disabled);
+            if (!isMainSwitchOn && isAgentRunning) {
+                console.log("主控制关闭，停止代理...");
+                stopAgent();
+            }
         });
 
         chatPermissionSwitch.addEventListener('change', () => {
             isChatPermissionGranted = chatPermissionSwitch.checked;
-            if (!isChatPermissionGranted) chatQueue = [];
+            console.log("聊天权限开关状态:", isChatPermissionGranted);
+            if (!isChatPermissionGranted) {
+                console.log("聊天权限关闭，清空待发送队列。");
+                chatQueue = []; // 如果撤销权限，清空队列
+            }
         });
 
         muteAudioSwitch.addEventListener('change', () => {
             isMuted = muteAudioSwitch.checked;
+            console.log("静音开关状态:", isMuted);
             updateGain();
         });
 
         volumeSlider.addEventListener('input', () => {
+            // 实时更新音量，不必每次都 log
             if (!isMuted) updateGain();
+        });
+        // 可选: 添加 change 事件监听器，在用户松开滑块时 log 一次最终值
+        volumeSlider.addEventListener('change', () => {
+            console.log("音量滑块最终值:", volumeSlider.value);
+            if (!isMuted) updateGain(); // 确保最终值被设置
         });
 
         runButton.addEventListener('click', () => {
-            if (isAgentRunning) stopAgent();
-            else if (isMainSwitchOn) startAgent();
+            if (isAgentRunning) {
+                console.log("点击停止按钮");
+                stopAgent();
+            } else if (isMainSwitchOn) {
+                console.log("点击启动按钮");
+                startAgent();
+            } else {
+                console.log("点击启动按钮，但主开关未打开");
+            }
         });
+        console.log("AI Agent: 事件监听器绑定完成。");
 
         // --- 拖动逻辑 ---
-        const header = panel.querySelector('.panel-header');
+        console.log("AI Agent: 开始绑定拖动逻辑...");
         let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
         header.addEventListener('mousedown', e => {
-            if (e.button !== 0) return;
+            if (e.button !== 0) return; // 只响应左键
             isDragging = true;
-            startX = e.clientX; startY = e.clientY;
-            const rect = panel.getBoundingClientRect();
-            origX = rect.left; origY = rect.top;
-            panel.style.transition = 'none';
-            document.body.style.userSelect = 'none';
-            header.style.cursor = 'grabbing';
+            startX = e.clientX;
+            startY = e.clientY;
+            // 使用 getComputedStyle 获取准确的初始位置
+            const computedStyle = window.getComputedStyle(panel);
+            origX = parseFloat(computedStyle.left);
+            origY = parseFloat(computedStyle.top);
+            // 如果解析失败（例如初始值是 'auto'），使用 getBoundingClientRect 作为备选
+            if (isNaN(origX) || isNaN(origY)) {
+                const rect = panel.getBoundingClientRect();
+                origX = rect.left;
+                origY = rect.top;
+                console.warn("AI Agent Drag: 无法从 computedStyle 解析 'left'/'top'，使用 getBoundingClientRect 作为备选。");
+            }
+
+            panel.style.transition = 'none'; // 拖动时取消过渡效果
+            document.body.style.userSelect = 'none'; // 拖动时禁止选择文本
+            header.style.cursor = 'grabbing'; // 更改鼠标样式
+            console.log("开始拖动面板");
         });
+
         document.addEventListener('mousemove', e => {
             if (!isDragging) return;
+            // 计算新位置并更新样式
             panel.style.left = origX + (e.clientX - startX) + 'px';
             panel.style.top = origY + (e.clientY - startY) + 'px';
         });
+
         document.addEventListener('mouseup', e => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || !isDragging) return; // 只处理左键释放且正在拖动的情况
             isDragging = false;
-            panel.style.transition = '';
-            document.body.style.userSelect = '';
-            header.style.cursor = 'grab';
+            panel.style.transition = ''; // 恢复过渡效果（如果之前有的话）
+            document.body.style.userSelect = ''; // 恢复文本选择
+            header.style.cursor = 'grab'; // 恢复鼠标样式
+            console.log("结束拖动面板");
         });
-    }
+        console.log("AI Agent: 拖动逻辑绑定完成。");
+
+        console.log("AI Agent: 控制面板 UI 创建和初始化完成！");
+    } // createControlPanel 函数结束
 
     /**
      * 启动 AI 代理的核心逻辑。
@@ -388,6 +1180,17 @@
             console.warn("Cannot start agent, Master Control is OFF.");
             return;
         }
+        // Ensure Room ID is valid before starting
+        if (!roomId) {
+            console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, invalid Room/Video ID.`);
+            alert("错误：无法获取房间/视频 ID，请检查页面是否为有效直播/视频页。");
+            return;
+        }
+        if (!currentPlatformAdapter.findVideoElement()) {
+            console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, video element not found.`);
+            alert("错误：未找到视频元素，请确保直播/视频已加载。");
+            return;
+        }
 
         console.log("Starting AI Agent...");
         if (initializeAudio()) { // 初始化音频成功
@@ -399,13 +1202,13 @@
             console.log("AI Agent started successfully.");
         } else { // 初始化音频失败
             console.error("Failed to initialize audio. Agent cannot start.");
-            alert("错误：无法访问视频音频。请确保直播正在播放。");
+            alert("错误：无法访问视频音频。请确保直播/视频正在播放且浏览器允许访问。");
             // 保持按钮和开关的状态（用户需要修复问题）
             isAgentRunning = false; // 确保运行状态为 false
             runButton.textContent = 'Start'; // 中文
             runButton.classList.remove('running');
-            // 可以考虑禁用按钮，直到问题解决，或者让用户重试
-            // runButton.disabled = true;
+            // Make button available if main switch is on, even if audio failed, so user can retry
+            runButton.disabled = !isMainSwitchOn;
         }
     }
 
@@ -425,52 +1228,45 @@
         // 更新按钮状态
         runButton.textContent = 'Start'; // 中文
         runButton.classList.remove('running');
-        // 确保主开关打开时，按钮是可用的
-        if (isMainSwitchOn) {
-            runButton.disabled = false;
-        }
+        // 确保主开关打开且视频元素存在时，按钮是可用的
+        runButton.disabled = !(isMainSwitchOn && !!currentPlatformAdapter.findVideoElement());
 
         console.log("AI Agent stopped.");
     }
 
     /**
-     * 在页面上查找视频元素。
-     * Bilibili 可能使用 <video> 或自定义元素如 <bwp-video>。
-     * @returns {HTMLVideoElement|null} 视频元素或 null。
-     */
-    function findVideoElement() {
-        // 如果 Bilibili 更改结构，需要调整选择器
-        return document.querySelector('video, bwp-video video');
-    }
-
-    /**
-     * 设置 MutationObserver 以检测视频元素何时添加到 DOM 中。
-     */
+ * 设置 MutationObserver 以检测视频元素何时添加到 DOM 中。
+ */
     function observeVideoElement() {
         const targetNode = document.body;
         const config = { childList: true, subtree: true };
 
         const observer = new MutationObserver((mutationsList, obs) => {
-            const videoElement = findVideoElement();
+            // Use platform adapter to find video element
+            const videoElement = currentPlatformAdapter.findVideoElement();
             if (videoElement) {
-                console.log('AI Agent: Video element detected.');
+                console.log(`AI Agent (${currentPlatformAdapter.platformName}): Video element detected.`);
                 obs.disconnect(); // 一旦找到就停止观察
                 // 视频元素找到后，如果主开关是开的，则自动启用运行按钮
                 if (isMainSwitchOn && runButton) {
                     runButton.disabled = false;
                 }
+                // Optional: Re-initialize audio if needed, e.g., if video element was replaced
+                // initializeAudio();
             }
         });
 
         // 初始检查，以防元素已经存在
-        if (findVideoElement()) {
-            console.log('AI Agent: Video element already present.');
+        if (currentPlatformAdapter.findVideoElement()) {
+            console.log(`AI Agent (${currentPlatformAdapter.platformName}): Video element already present.`);
             if (isMainSwitchOn && runButton) {
                 runButton.disabled = false;
             }
         } else {
-            console.log('AI Agent: Observing for video element...');
+            console.log(`AI Agent (${currentPlatformAdapter.platformName}): Observing for video element...`);
             observer.observe(targetNode, config);
+            // Keep run button disabled until video is found
+            if (runButton) runButton.disabled = true;
         }
     }
 
@@ -479,14 +1275,22 @@
      * @returns {boolean} 如果初始化成功则为 true，否则为 false。
      */
     function initializeAudio() {
-        const videoElement = findVideoElement();
+        // Use platform adapter to find video element
+        const videoElement = currentPlatformAdapter.findVideoElement();
         if (!videoElement) {
-            console.error("Cannot initialize audio: Video element not found.");
+            console.error("Cannot initialize audio: Video element not found by adapter.");
             return false;
         }
-        // 确保视频正在播放或准备播放以获取音轨
-        if (videoElement.readyState < 2) { // 理想情况下需要 HAVE_METADATA 或更高
-            console.warn("Video element not ready yet (readyState < 2). Audio might not be available immediately.");
+        // 确保视频有音轨（readyState 考虑改为 HAVE_METADATA 或更高）
+        if (videoElement.readyState < 1) { // HAVE_NOTHING or HAVE_METADATA is often enough to get tracks
+            console.warn(`Video element readyState (${videoElement.readyState}) might be too low. Audio capture could fail if tracks are not ready.`);
+            // Try connecting anyway, browsers might handle it.
+        }
+        // Check for actual audio tracks
+        const audioTracks = videoElement.captureStream ? videoElement.captureStream().getAudioTracks() : (videoElement.mozCaptureStream ? videoElement.mozCaptureStream().getAudioTracks() : []);
+        if (audioTracks.length === 0 && videoElement.readyState < 3) { // HAVE_CURRENT_DATA or more likely needed for source node
+            console.warn("Video element does not seem to have audio tracks yet or is not playing.");
+            // Proceed, but it might naturally fail later if no audio comes through.
         }
 
         try {
@@ -501,6 +1305,7 @@
                     console.log("AudioContext resumed successfully.");
                 }).catch(e => {
                     console.error("Failed to resume AudioContext:", e);
+                    // This might be critical, audio won't work.
                 });
             }
 
@@ -511,10 +1316,35 @@
             }
             // 每次都尝试重新连接源，以防视频元素被替换
             if (mediaElementSource) {
-                mediaElementSource.disconnect(); // 断开旧连接
+                try {
+                    mediaElementSource.disconnect(); // 断开旧连接
+                } catch (e) {
+                    console.warn("Minor error disconnecting old media element source:", e);
+                }
             }
-            mediaElementSource = audioContext.createMediaElementSource(videoElement); // 从视频创建源节点
-            console.log("MediaElementAudioSourceNode created/reconnected.");
+            // Error handling specifically for createMediaElementSource
+            try {
+                mediaElementSource = audioContext.createMediaElementSource(videoElement); // 从视频创建源节点
+                console.log("MediaElementAudioSourceNode created/reconnected.");
+            } catch (sourceError) {
+                console.error("Error creating MediaElementAudioSourceNode:", sourceError);
+                // This usually happens if the element doesn't have audio or isn't properly loaded
+                if (videoElement.src) {
+                    console.error("Video source:", videoElement.src); // Log src for debugging
+                } else {
+                    console.error("Video element has no 'src' attribute.");
+                }
+                // Attempt to use captureStream as a fallback if supported
+                if (videoElement.captureStream && audioTracks.length > 0) {
+                    console.log("Attempting fallback using captureStream().");
+                    const mediaStream = videoElement.captureStream();
+                    mediaElementSource = audioContext.createMediaStreamSource(mediaStream);
+                    console.log("Fallback MediaStreamSource created.");
+
+                } else {
+                    throw sourceError; // Re-throw if fallback not possible
+                }
+            }
 
             if (!gainNode) {
                 gainNode = audioContext.createGain(); // 创建音量控制节点
@@ -522,8 +1352,8 @@
             }
 
             // 设置音频处理管线:
-            // 视频 -> 音量控制 -> 录音目标 (用于录制)
-            // 视频 -> 音量控制 -> 实际输出 (用于收听)
+            // video source -> 音量控制 -> 录音目标 (用于录制)
+            // video source -> 音量控制 -> 实际输出 (用于收听)
             mediaElementSource.connect(gainNode);
             gainNode.connect(destination); // 连接音量节点到录音目标
             gainNode.connect(audioContext.destination); // 连接音量节点到实际扬声器
@@ -534,9 +1364,9 @@
         } catch (error) {
             console.error("Error initializing audio context or nodes:", error);
             // 清理可能部分创建的元素
-            if (gainNode) gainNode.disconnect();
-            if (mediaElementSource) mediaElementSource.disconnect();
-            // audioContext = null; // 不设置为 null，以便下次尝试 resume 或 recreate
+            if (gainNode) { try { gainNode.disconnect(); } catch (e) { } }
+            if (mediaElementSource) { try { mediaElementSource.disconnect(); } catch (e) { } }
+            // Do not null out audioContext, maybe it can be resumed/reused
             destination = null;
             mediaElementSource = null;
             gainNode = null;
@@ -548,15 +1378,25 @@
      * 根据静音状态和音量滑块更新增益节点值。
      */
     function updateGain() {
-        if (gainNode && audioContext) {
+        if (gainNode && audioContext && audioContext.state === 'running') { // Only update if context is running
             try {
-                const volume = isMuted ? 0 : volumeSlider.value / 100; // 静音则为0，否则为滑块值
-                // 使用 B站 自己的音量接口可能更可靠，但这里保留 GainNode 控制逻辑
-                gainNode.gain.setValueAtTime(volume, audioContext.currentTime); // 平滑设置音量
-                // console.log(`Gain set to: ${volume}`);
+                const volumeValue = parseFloat(volumeSlider.value) / 100;
+                const targetVolume = isMuted ? 0 : volumeValue;
+                // Use setTargetAtTime for smoother volume changes
+                gainNode.gain.setTargetAtTime(targetVolume, audioContext.currentTime, 0.015); // Target in ~15ms
+                // console.log(`Gain target set to: ${targetVolume}`);
             } catch (e) {
                 console.error("Error setting gain value:", e);
+                // Fallback to immediate set if smooth transition fails
+                try {
+                    const volumeValue = parseFloat(volumeSlider.value) / 100;
+                    gainNode.gain.value = isMuted ? 0 : volumeValue;
+                } catch (e2) {
+                    console.error("Fallback gain setting also failed:", e2);
+                }
             }
+        } else if (gainNode && audioContext && audioContext.state !== 'running') {
+            // console.log("AudioContext not running, skipping gain update.");
         }
     }
 
@@ -569,8 +1409,9 @@
             console.warn("Recording cycle already active (recorders running).");
             return;
         }
-        if (!destination) {
-            console.error("Cannot start recording cycle: Audio destination not initialized.");
+        if (!destination || !destination.stream) { // Check stream existence too
+            console.error("Cannot start recording cycle: Audio destination or stream not initialized.");
+            stopAgent(); // Stop if audio setup is bad
             return;
         }
 
@@ -579,13 +1420,30 @@
         // 确保创建录制器
         const options = { mimeType: 'audio/webm;codecs=opus' };
         try {
-            // 每次启动循环时都创建新的 MediaRecorder 实例可能更健壮
+            // Check if MediaRecorder is available and supports the MIME type
+            if (typeof MediaRecorder === 'undefined') {
+                throw new Error("MediaRecorder API is not supported by this browser.");
+            }
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                console.warn(`MIME type ${options.mimeType} not supported. Trying default.`);
+                // Try without options or with a fallback like audio/ogg
+                options.mimeType = 'audio/ogg;codecs=opus'; // Another common option
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    console.warn(`MIME type ${options.mimeType} also not supported. Trying browser default.`);
+                    delete options.mimeType; // Let the browser choose
+                }
+            }
+            // Ensure stream has active audio tracks
+            if (destination.stream.getAudioTracks().length === 0 || !destination.stream.active) {
+                throw new Error("Audio destination stream has no active audio tracks.");
+            }
+
             mediaRecorder1 = new MediaRecorder(destination.stream, options);
             mediaRecorder2 = new MediaRecorder(destination.stream, options);
-            console.log("MediaRecorders created.");
+            console.log(`MediaRecorders created${options.mimeType ? ' with type: ' + options.mimeType : ' with default type'}.`);
         } catch (e) {
             console.error("Error creating MediaRecorder:", e);
-            alert(`错误：浏览器不支持所需的音频格式 (${options.mimeType})。无法录制。`);
+            alert(`错误：无法创建音频录制器。浏览器可能不支持所需功能或音频流无效。\n${e.message}`);
             stopAgent(); // 创建失败则停止代理
             return; // 停止进程
         }
@@ -607,75 +1465,79 @@
      */
     function setupMediaRecorder(recorder, chunks, label, nextRecorder) {
         recorder.ondataavailable = (event) => {
-            // 当有音频数据可用时触发
             if (event.data.size > 0) {
-                // console.log(`Audio data available from ${label}: ${event.data.size} bytes`);
                 chunks.push(event.data); // 将数据块存入数组
             }
         };
 
         recorder.onstart = () => {
-            // 当录制开始时触发
             console.log(`${label} started recording.`);
             recordingStartTimestamp = Date.now(); // 标记此块的开始时间
             chunks.length = 0; // 清空块数组以用于新的录制段
         };
 
         recorder.onstop = async () => {
-            // 当录制停止时触发
             console.log(`${label} stopped recording.`);
-
             recordingEndTimestamp = Date.now();
 
             // 标记对应的录制器为非活动
             if (label === 'Recorder 1') isRecorder1Active = false;
             else isRecorder2Active = false;
 
-            // 检查代理运行状态，而不是主开关状态，因为停止可能是由按钮触发的
+            // 检查代理运行状态
             const shouldContinue = isAgentRunning;
 
             if (chunks.length > 0) {
-                // 如果收集到了数据块
-                const audioBlob = new Blob(chunks, { type: recorder.mimeType }); // 将数据块合并成 Blob
-                if (audioBlob.size < 8192) { // 避免发送几乎为空的 Blob
+                const audioBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }); // 使用录制器实际的 mimetype
+                if (audioBlob.size < 2048) { // Increase threshold slightly for header data etc.
                     console.warn(`${label}: Blob size is very small (${audioBlob.size} bytes), skipping send.`);
                 } else {
-                    const chats = collectChatMessages(); // 收集此录制期间的相关弹幕消息
-                    const screenshotBlob = await captureScreenshot(); // 捕获屏幕截图
+                    // 使用适配器收集聊天消息
+                    const chats = currentPlatformAdapter.collectChatMessages(recordingStartTimestamp, recordingEndTimestamp);
+                    const screenshotBlob = await captureScreenshot(); // 捕获屏幕截图 (uses adapter's findVideoElement)
                     sendDataToServer(audioBlob, chats, screenshotBlob); // 发送数据
                 }
-                chunks.length = 0; // 处理后清空块数组
+                chunks.length = 0; // 清空块数组
             } else {
                 console.log(`${label}: No audio data recorded in this interval.`);
+                // Even if no audio, maybe send chat/screenshot if needed?
+                // if (!isSending) { // Only if not currently sending
+                //    const chats = currentPlatformAdapter.collectChatMessages(recordingStartTimestamp, recordingEndTimestamp);
+                //    const screenshotBlob = await captureScreenshot()
+                //    if (chats.length > 0 || screenshotBlob) {
+                //        sendDataToServer(null, chats, screenshotBlob); // Send without audio
+                //    }
+                // }
             }
 
-            // 如果代理应该继续运行，启动 *另一个* 录制器以继续循环
+            // 如果代理应该继续运行，并且是时候切换了
             if (shouldContinue) {
-                // 只有在另一个录制器也停止的情况下才启动下一个（避免双重启动）
-                if (!isRecorder1Active && !isRecorder2Active) {
+                // Only start the *next* recorder if *this* one just stopped and the other is *not* active
+                const otherIsActive = (label === 'Recorder 1') ? isRecorder2Active : isRecorder1Active;
+                if (!otherIsActive) {
                     startSpecificRecorder(nextRecorder);
                 } else {
-                    // console.log(`Waiting for the other recorder to stop before starting ${nextRecorder === mediaRecorder1 ? 'Recorder 1' : 'Recorder 2'}`);
+                    // This case might happen if stop was called manually while the other was schedule to start
+                    console.log(`Waiting for the other recorder (${otherIsActive ? (label === 'Recorder 1' ? 'Recorder 2' : 'Recorder 1') : 'N/A'}) to potentially stop before starting next.`);
                 }
             } else {
-                // 如果代理已被停止（通过 stopAgent 函数），则不启动下一个录制器
                 console.log("Agent run state is false, not starting next recorder.");
-                // 确保所有录制标志都为 false
-                isRecorder1Active = false;
+                isRecorder1Active = false; // Ensure both flags are false on final stop
                 isRecorder2Active = false;
-                // 停止时 UI 状态已在 stopAgent 中处理，此处无需重复
             }
         };
 
         recorder.onerror = (event) => {
-            // 当发生错误时触发
-            console.error(`${label} error:`, event.error);
+            let errorMsg = "Unknown recording error";
+            if (event.error) {
+                errorMsg = `${event.error.name}: ${event.error.message}`;
+            }
+            console.error(`${label} error:`, errorMsg, event);
             // 标记对应的录制器为非活动
             if (label === 'Recorder 1') isRecorder1Active = false;
             else isRecorder2Active = false;
 
-            // 尝试恢复？也许停止一切并发出错误信号。
-            alert(`录制器 ${label} 发生错误。请检查控制台并可能需要重启代理。`);
+            alert(`录制器 ${label} 发生错误: ${errorMsg}\n请检查控制台并可能需要重启代理。`);
             stopAgent(); // 在错误时停止整个代理
         };
     }
@@ -686,7 +1548,6 @@
      * @param {MediaRecorder} recorderToStart - 要启动的录制器实例。
      */
     function startSpecificRecorder(recorderToStart) {
-        // 再次检查代理运行状态，以防在 onstop 和此调用之间状态改变
         if (!isAgentRunning) {
             console.log("Preventing recorder start because Agent run state is false.");
             isRecorder1Active = false; // 确保标志重置
@@ -694,15 +1555,19 @@
             return;
         }
         // 检查录制器是否已经是活动状态或非 'inactive' 状态
-        if ((recorderToStart === mediaRecorder1 && isRecorder1Active) ||
-            (recorderToStart === mediaRecorder2 && isRecorder2Active) ||
+        const label = recorderToStart === mediaRecorder1 ? 'Recorder 1' : 'Recorder 2';
+        if ((label === 'Recorder 1' && isRecorder1Active) ||
+            (label === 'Recorder 2' && isRecorder2Active) ||
             recorderToStart.state !== 'inactive') {
-            console.warn("Attempted to start a recorder that is already active or not inactive:", recorderToStart.state);
+            console.warn(`Attempted to start ${label} which is already active or not inactive (state: ${recorderToStart.state}).`);
             return;
         }
 
         try {
-            const label = recorderToStart === mediaRecorder1 ? 'Recorder 1' : 'Recorder 2';
+            // Check stream status again right before starting
+            if (!destination || !destination.stream || !destination.stream.active) {
+                throw new Error(`Cannot start ${label}: Destination stream is not active.`);
+            }
             recorderToStart.start(); // 开始录制 (可能会抛出错误)
 
             // 设置活动标志
@@ -718,22 +1583,24 @@
             // 定义停止函数，用于超时
             const stopFunction = () => {
                 // 检查录制器实例是否存在且仍在录制中
-                if (recorderToStart && recorderToStart.state === 'recording') {
+                // Also check if the agent is still supposed to be running
+                if (isAgentRunning && recorderToStart && recorderToStart.state === 'recording') {
                     console.log(`Timeout reached for ${label}, stopping...`);
                     try {
+                        // recorderToStart.requestData(); // Request data just before stopping? Might not be needed with chunking.
                         recorderToStart.stop(); // 停止录制（将触发 onstop）
                     } catch (stopError) {
-                        console.error(`Error during ${label}.stop():`, stopError);
-                        // 即使 stop 出错，也手动标记为非活动
-                        if (label === 'Recorder 1') isRecorder1Active = false;
-                        else isRecorder2Active = false;
-                        stopAgent(); // 严重错误，停止代理
+                        console.error(`Error during ${label}.stop() via timeout:`, stopError);
+                        // 手动标记为非活动并停止代理
+                        if (label === 'Recorder 1') isRecorder1Active = false; else isRecorder2Active = false;
+                        stopAgent();
                     }
                 } else {
-                    // console.log(`${label} was already stopped or inactive when timeout triggered.`);
-                    // 确保标志也是 false
-                    if (label === 'Recorder 1') isRecorder1Active = false;
-                    else isRecorder2Active = false;
+                    // console.log(`${label} was already stopped, inactive, or agent stopped when timeout triggered.`);
+                    // Ensure flags are false if recorder isn't active
+                    if (recorderToStart.state !== 'recording') {
+                        if (label === 'Recorder 1') isRecorder1Active = false; else isRecorder2Active = false;
+                    }
                 }
             };
 
@@ -747,8 +1614,8 @@
             }
 
         } catch (startError) {
-            console.error("Error starting recorder:", startError);
-            alert("启动音频录制器失败。直播流可能已停止或发生内部错误。");
+            console.error(`Error starting ${label}:`, startError);
+            alert(`启动音频录制器 ${label} 失败: ${startError.message}`);
             // 标记为非活动
             if (recorderToStart === mediaRecorder1) isRecorder1Active = false;
             else isRecorder2Active = false;
@@ -767,19 +1634,32 @@
         clearTimeout(recorder1Timeout);
         clearTimeout(recorder2Timeout);
 
-        // 安全地停止录制器（如果它们存在且处于活动状态）
+        // 停止录制器 - 确保检查状态避免错误
         [mediaRecorder1, mediaRecorder2].forEach((recorder, index) => {
-            if (recorder && recorder.state !== 'inactive') {
+            const label = `Recorder ${index + 1}`;
+            if (recorder && recorder.state === 'recording') {
                 try {
-                    recorder.stop(); // 这个 stop 会触发 onstop，但我们已经设置 isAgentRunning 为 false，所以不会启动下一个
-                    console.log(`Recorder ${index + 1} stopped via stopRecordingAndProcessing.`);
+                    console.log(`Force stopping ${label} due to agent stop command.`);
+                    recorder.stop(); // onstop will handle logic based on `isAgentRunning = false`
                 } catch (e) {
-                    console.warn(`Error stopping recorder ${index + 1}:`, e);
+                    console.warn(`Error force stopping ${label}:`, e);
+                    // Manually set flags just in case onstop doesn't fire correctly after error
+                    if (index === 0) isRecorder1Active = false; else isRecorder2Active = false;
                 }
+            } else if (recorder && recorder.state === 'paused') {
+                // This state shouldn't normally be used, but handle it
+                try {
+                    console.log(`Force stopping paused ${label}.`);
+                    recorder.stop();
+                } catch (e) { console.warn(`Error stopping paused ${label}:`, e); }
+                if (index === 0) isRecorder1Active = false; else isRecorder2Active = false;
+            } else {
+                // Recorder is inactive or null
+                if (index === 0) isRecorder1Active = false; else isRecorder2Active = false;
             }
         });
 
-        // 重置录制器活动标志
+        // 额外确保标志被清除 (以防 onstop 逻辑出问题)
         isRecorder1Active = false;
         isRecorder2Active = false;
 
@@ -788,97 +1668,20 @@
         chunks2 = [];
         accumulatedChunks = [];
         isAccumulating = false;
-        // isSending 状态由 XHR 回调处理，这里不清，以防万一有请求在进行中
+        // isSending 状态由 XHR 回调处理，不清
 
-        // 理论上，录制器实例可以在这里销毁（设置为 null）以释放资源，
-        // 但下次启动时会重新创建，所以不是必须的。
-        // mediaRecorder1 = null;
+        // 可以选择性清理 AudioContext 资源，但这可能需要重新初始化
+        // if (audioContext && audioContext.state !== 'closed') {
+        //     audioContext.close().then(() => console.log("AudioContext closed.")).catch(e => console.warn("Error closing AudioContext:", e));
+        //     audioContext = null;
+        // }
+        // if (destination) { destination.disconnect(); destination = null; }
+        // if (gainNode) { gainNode.disconnect(); gainNode = null; }
+        // if (mediaElementSource) { mediaElementSource.disconnect(); mediaElementSource = null; }
+        // mediaRecorder1 = null; // Release recorder instances
         // mediaRecorder2 = null;
 
-        console.log("Recording cycle fully stopped and resources cleared.");
-    }
-
-    /**
-    * 从 DOM 中收集在最后录制间隔内的弹幕消息。
-    * @returns {Array<object>} 弹幕消息对象的数组。
-    */
-    function collectChatMessages() {
-        const newChats = [];
-        // 查找弹幕元素，优先使用 .danmaku-item
-        let chatElements = document.querySelectorAll('.danmaku-item');
-
-        if (!chatElements || chatElements.length === 0) {
-            chatElements = document.querySelectorAll('.chat-item'); // 备用选择器
-            if (!chatElements || chatElements.length === 0) {
-                console.warn("Could not find chat elements (tried .danmaku-item, .chat-item). Chat collection might fail.");
-                return newChats;
-            } else {
-                // console.log("Using fallback selector '.chat-item' for chat messages.");
-            }
-        }
-
-        const startSec = Math.floor(recordingStartTimestamp / 1000);
-        const endSec = Math.floor(recordingEndTimestamp / 1000);
-        const effectiveEndSec = Math.max(endSec, startSec);
-        console.log(`[Chat Collector] Interval: ${startSec} - ${effectiveEndSec}`);
-        // console.log(`Collecting chats between ${startSec} and ${effectiveEndSec} seconds epoch.`);
-
-        chatElements.forEach(chatElement => {
-            try {
-                // 尝试获取时间戳 (data-ts 似乎更常见于 B站弹幕)
-                const timestampAttr = chatElement.getAttribute('data-ts') || chatElement.getAttribute('data-timestamp');
-                let timestamp = NaN;
-                let isInTimeWindow = true; // 如果没有时间戳，默认包含？取决于需求
-
-                if (timestampAttr) {
-                    timestamp = parseInt(timestampAttr, 10);
-                    if (!isNaN(timestamp)) {
-                        // 转换毫秒时间戳为秒
-                        if (timestamp > 1e12) timestamp = Math.floor(timestamp / 1000);
-                        isInTimeWindow = (timestamp >= startSec && timestamp <= effectiveEndSec);
-                    } else {
-                        isInTimeWindow = false; // 无效时间戳则不包含
-                    }
-                } else {
-                    // console.warn("Chat element missing timestamp attribute (data-ts/data-timestamp).");
-                    // isInTimeWindow = true; // 取消注释以在没有时间戳时包含所有弹幕
-                    isInTimeWindow = false; // 保持 false 以严格按时间过滤
-                }
-
-                if (isInTimeWindow) {
-                    // 获取 UID 和用户名
-                    const uid = chatElement.getAttribute('data-uid');
-                    const uname = chatElement.getAttribute('data-uname');
-                    // 获取弹幕内容
-                    const contentNode = chatElement.querySelector('.danmaku-content')
-                        || chatElement.querySelector('.danmaku-item-content')
-                        || chatElement.querySelector('.danmaku-message') // 另一个可能的选择器
-                        || chatElement; // 最后尝试整个元素
-                    let content = contentNode ? contentNode.innerText.trim() : null;
-
-                    // 如果直接从 chatElement 获取文本，尝试清理
-                    if (content && chatElement === contentNode && uname && content.startsWith(uname)) {
-                        content = content.substring(uname.length).replace(/^[:：\s]+/, '').trim();
-                    }
-
-                    if (uid && uname && content) {
-                        newChats.push({
-                            uname: uname,
-                            content: content,
-                            uid: uid,
-                            timestamp: isNaN(timestamp) ? null : timestamp // 发送时间戳（如果可用）以供参考
-                        });
-                    } else {
-                        // console.warn("Skipping chat item due to missing data:", { uid, uname, content: content ? 'exists' : 'missing', timestamp });
-                    }
-                }
-            } catch (e) {
-                console.error("Error processing a chat element:", e, chatElement);
-            }
-        });
-
-        console.log(`Collected ${newChats.length} relevant chat messages for the interval.`);
-        return newChats;
+        console.log("Recording cycle fully stopped and resources potentially cleared.");
     }
 
     /**
@@ -886,180 +1689,281 @@
      * @returns {Promise<Blob|null>} 一个 Promise，解析为截图 Blob (JPEG) 或在错误时为 null。
      */
     async function captureScreenshot() {
-        const videoElement = findVideoElement();
-        if (!videoElement || videoElement.readyState < 1) {
-            console.warn('Video element not found or not ready for screenshot.');
+        // 使用适配器获取视频元素
+        const videoElement = currentPlatformAdapter.findVideoElement();
+        if (!videoElement) {
+            console.warn('Screenshot: Video element not found by adapter.');
+            return null;
+        }
+        // Check if video has dimensions and data
+        if (videoElement.readyState < 1 || videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+            console.warn(`Screenshot: Video element not ready (readyState: ${videoElement.readyState}, width: ${videoElement.videoWidth}, height: ${videoElement.videoHeight}).`);
             return null;
         }
 
         const canvas = document.createElement('canvas');
-        canvas.width = SCREENSHOT_WIDTH;
-        canvas.height = SCREENSHOT_HEIGHT;
+        // Adjust desired dimensions based on video aspect ratio to avoid distortion
+        const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+        let targetWidth = SCREENSHOT_WIDTH;
+        let targetHeight = SCREENSHOT_HEIGHT;
+
+        if (aspectRatio > (SCREENSHOT_WIDTH / SCREENSHOT_HEIGHT)) {
+            // Video is wider than target aspect ratio, limited by width
+            targetHeight = Math.round(SCREENSHOT_WIDTH / aspectRatio);
+        } else {
+            // Video is taller or equal aspect ratio, limited by height
+            targetWidth = Math.round(SCREENSHOT_HEIGHT * aspectRatio);
+        }
+
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
 
         try {
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height); // 绘制视频帧
+            if (!ctx) {
+                throw new Error("Could not get 2D context from canvas.");
+            }
+            // Clear canvas (might be needed if reusing canvases, not strictly necessary here)
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Draw the video frame onto the canvas
+            ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
+            // Check if canvas is blank (can happen with protected content or errors)
+            // This check is not foolproof but can catch some issues.
+            // if (isCanvasBlank(canvas)) {
+            //     console.warn("Screenshot: Canvas appears blank after drawing video. Might be protected content.");
+            //     return null;
+            // }
+
+            // Return a promise that resolves with the blob
             return new Promise((resolve) => {
                 canvas.toBlob((blob) => {
-                    // if (!blob) {
-                    //    console.error("Canvas toBlob returned null.");
-                    // }
-                    resolve(blob); // 解析 Promise 返回 Blob 或 null
-                }, 'image/jpeg', SCREENSHOT_QUALITY); // 指定格式和质量
+                    if (!blob) {
+                        console.error("Screenshot: canvas.toBlob returned null. Canvas might be tainted or too large.");
+                    } else {
+                        // console.log(`Screenshot captured: ${blob.size} bytes, dimensions: ${canvas.width}x${canvas.height}`);
+                    }
+                    resolve(blob); //
+                }, 'image/jpeg', SCREENSHOT_QUALITY); // Specify format and quality
             });
         } catch (error) {
             console.error('Error capturing screenshot:', error);
-            return null; // 如果绘制或 Blob 创建失败，则返回 null
+            if (error.name === 'SecurityError') {
+                console.error("Could not capture screenshot due to cross-origin restrictions (video source might be from another domain).");
+            }
+            return null; // Return null on any error
         }
     }
+
+    // Helper function to check if canvas is blank (simple version)
+    // function isCanvasBlank(canvas) {
+    //     const ctx = canvas.getContext('2d');
+    //     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    //     return !imageData.data.some(channel => channel !== 0);
+    // }
 
     /**
      * 将音频、弹幕消息和截图发送到后端 API。
      * 处理累积逻辑。
-     * @param {Blob} audioBlob - 录制的音频数据。
+     * @param {Blob|null} audioBlob - 录制的音频数据 (可以是 null).
      * @param {Array<object>} chats - 收集到的弹幕消息对象数组。
      * @param {Blob|null} screenshotBlob - 捕获的屏幕截图 blob，或 null。
      */
     function sendDataToServer(audioBlob, chats, screenshotBlob) {
-        if (!audioBlob || audioBlob.size === 0) {
-            console.log("No valid audio data to send.");
+        // Ensure we have *something* to send
+        if ((!audioBlob || audioBlob.size === 0) && chats.length === 0 && !screenshotBlob) {
+            console.log("No valid data (audio, chat, or screenshot) to send.");
             return;
         }
 
-        // 处理累积逻辑
+        // 处理累积逻辑 (只累积音频)
         if (isSending) {
-            console.log('Previous request in progress. Accumulating audio chunk...');
-            if (!isAccumulating) {
-                accumulatedChunks = [audioBlob]; // 开始新的累积
-                isAccumulating = true;
-            } else {
-                accumulatedChunks.push(audioBlob); // 添加到现有累积中
+            console.log('Previous request in progress. Accumulating audio chunk (if present)...');
+            if (audioBlob && audioBlob.size > 0) {
+                if (!isAccumulating) {
+                    accumulatedChunks = [audioBlob]; // 开始新的累积
+                    isAccumulating = true;
+                } else {
+                    accumulatedChunks.push(audioBlob); // 添加到现有累积中
+                }
             }
-            // 简单起见，不累积弹幕和截图
+            // 简单起见，不累积弹幕和截图 for now
             return;
         }
 
         // 合并累积的块
         let finalAudioBlob = audioBlob;
         if (isAccumulating && accumulatedChunks.length > 0) {
-            console.log(`Merging ${accumulatedChunks.length} accumulated audio chunks with the current one.`);
-            accumulatedChunks.push(audioBlob);
-            finalAudioBlob = new Blob(accumulatedChunks, { type: audioBlob.type });
-            accumulatedChunks = [];
+            console.log(`Merging ${accumulatedChunks.length} accumulated audio chunks with the current one (if any).`);
+            // If current audioBlob exists, add it to the front before merging
+            const chunksToMerge = audioBlob ? [audioBlob, ...accumulatedChunks] : [...accumulatedChunks];
+            if (chunksToMerge.length > 0) {
+                finalAudioBlob = new Blob(chunksToMerge, { type: chunksToMerge[0].type }); // Use type of first chunk
+                console.log(`Merged audio blob size: ${finalAudioBlob.size} bytes`);
+            } else {
+                finalAudioBlob = null; // No audio after all
+            }
+            accumulatedChunks = []; // Clear accumulated
             isAccumulating = false;
-            console.log(`Merged audio blob size: ${finalAudioBlob.size} bytes`);
         }
 
         // --- 准备并发送数据 ---
         isSending = true; // 设置发送锁
-        console.log(`Preparing to send data. Audio size: ${finalAudioBlob.size}`);
+        const dataSize = finalAudioBlob ? finalAudioBlob.size : 0;
+        const screenshotSize = screenshotBlob ? screenshotBlob.size : 0;
+        console.log(`Preparing to send data. Audio: ${dataSize} bytes, Chats: ${chats.length}, Screenshot: ${screenshotSize} bytes.`);
 
-        // 不再需要 FileReader 预读和检查 header，直接发送 Blob
         const formData = new FormData();
-        formData.append('audio', finalAudioBlob, `audio_${Date.now()}.webm`); // 使用 Blob 对象
+        // Append data only if it exists and is valid
+        if (finalAudioBlob && finalAudioBlob.size > 0) {
+            formData.append('audio', finalAudioBlob, `audio_${Date.now()}.webm`);
+        }
+        // Append chats even if empty, backend might expect the field
         formData.append('chats', JSON.stringify(chats));
-        formData.append('roomId', roomId);
-        if (screenshotBlob) {
+        formData.append('roomId', roomId || 'unknown'); // Send ID or fallback
+        formData.append('platform', currentPlatformAdapter.platformName); // Send platform identifier
+
+        if (screenshotBlob && screenshotBlob.size > 0) {
             const timestampStr = new Date().toISOString().replace(/[:.]/g, "-");
-            const screenshotFilename = `${roomId}_${timestampStr}.jpg`;
+            const screenshotFilename = `${roomId || 'unknown'}_${timestampStr}.jpg`;
             formData.append('screenshot', screenshotBlob, screenshotFilename);
         }
-
-        // console.log('[DEBUG] FormData prepared for sending.');
+        // Add recording interval timestamps
+        formData.append('startTimestamp', recordingStartTimestamp.toString());
+        formData.append('endTimestamp', recordingEndTimestamp.toString());
 
         // --- 使用 XMLHttpRequest 发送 ---
         const xhr = new XMLHttpRequest();
         xhr.open('POST', API_ENDPOINT, true);
-        xhr.timeout = 60000; // 设置超时
+        xhr.timeout = 90000; // Increase timeout to 90 seconds for potentially larger uploads / slower AI processing
 
         xhr.onreadystatechange = function () {
             if (xhr.readyState === 4) { // 请求完成
                 console.log(`[XHR] Upload complete. Status: ${xhr.status}`);
-                // 首先释放锁，然后再处理后续逻辑
-                isSending = false;
+                isSending = false; // **释放锁 - moved here, crucial**
 
-                if (xhr.status === 200) {
+                if (xhr.status >= 200 && xhr.status < 300) { // Success range
                     try {
                         const response = JSON.parse(xhr.responseText);
+                        console.log('Server Response:', response); // Log the whole response
+
                         if (response.status === 'success') {
                             console.log('Server processed data successfully.');
                             console.log('> Recognized text:', response.recognized_text || "N/A");
                             console.log('> AI Response:', response.LLM_response || "N/A");
 
                             // 排队发送 AI 回复
-                            let msgContents = response.msg_contents;
+                            let msgContents = response.msg_contents; // Assume backend sends this field
                             if (Array.isArray(msgContents) && msgContents.length > 0) {
                                 if (isChatPermissionGranted) {
                                     console.log(`Queueing ${msgContents.length} message(s) from AI.`);
+                                    let validMessages = 0;
                                     msgContents.forEach(msgContent => {
                                         if (typeof msgContent === 'string' && msgContent.trim()) {
-                                            chatQueue.push(...splitMessage(msgContent.trim()));
+                                            // Use the 'splitMessage' function for consistency
+                                            const messageParts = splitMessage(msgContent.trim());
+                                            chatQueue.push(...messageParts);
+                                            validMessages += messageParts.length;
+
+                                        } else {
+                                            console.warn("Received non-string or empty message from AI, discarding:", msgContent);
                                         }
                                     });
-                                    processChatQueue(); // 开始处理队列
+                                    if (validMessages > 0) {
+                                        // Only process if actual messages were queued
+                                        processChatQueue(); // Start processing queue immediately if not already running
+                                    }
                                 } else {
                                     console.log("AI provided messages, but chat permission is OFF. Messages discarded.");
                                 }
                             } else {
-                                console.log('No actionable chat messages received from AI.');
+                                console.log('No actionable chat messages received from AI response.');
                             }
                         } else {
-                            console.error('Server returned an error status:', response.message || "No message provided.");
+                            // Handle specific known error messages from backend if possible
+                            console.error('Server returned an application error:', response.message || "No error message provided.", response);
                         }
                     } catch (e) {
                         console.error('Failed to parse JSON response:', e);
-                        console.error('Raw Response:', xhr.responseText);
+                        console.error('Raw Response Text:', xhr.responseText);
                     }
                 } else {
+                    // Handle HTTP errors more specifically
                     console.error(`Failed to send data. HTTP Status: ${xhr.status} ${xhr.statusText}`);
-                    console.error('Response Text:', xhr.responseText);
+                    console.error('Response Text:', xhr.responseText); // Log response even on error
+                    // Maybe implement retry logic here for certain status codes (e.g., 503 Service Unavailable)
                 }
-                // 无论成功或失败，检查是否需要处理累积的块
+
+                // ** Check for accumulated chunks AFTER releasing lock and processing response **
                 if (isAccumulating && accumulatedChunks.length > 0) {
                     console.log("Processing accumulated chunks immediately after send completion.");
+                    // Dequeue the next blob carefully
                     const nextBlob = accumulatedChunks.shift();
                     if (accumulatedChunks.length === 0) isAccumulating = false;
-                    console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                    // 注意：这里没有传递新的 chats 和 screenshotBlob
-                    sendDataToServer(nextBlob, [], null);
+
+                    if (nextBlob) {
+                        console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
+                        // Note: no new chats or screenshotBlob are passed here
+                        sendDataToServer(nextBlob, [], null);
+                    } else {
+                        console.warn("Accumulated chunks array was manipulated unexpectedly.");
+                        isAccumulating = false; // Reset state
+                    }
                 }
             }
         };
 
         xhr.onerror = function () { // 网络错误
             console.error('[XHR] Network error occurred during upload.');
-            isSending = false; // 释放锁
+            isSending = false; // **释放锁**
+            // Handle accumulated chunks after network error
             if (isAccumulating && accumulatedChunks.length > 0) {
                 console.log("Processing accumulated chunks after network error.");
                 const nextBlob = accumulatedChunks.shift();
                 if (accumulatedChunks.length === 0) isAccumulating = false;
-                console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                sendDataToServer(nextBlob, [], null);
+                if (nextBlob) {
+                    console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
+                    sendDataToServer(nextBlob, [], null);
+                } else {
+                    console.warn("Accumulated chunks array was manipulated unexpectedly.");
+                    isAccumulating = false;
+                }
             }
         };
 
         xhr.ontimeout = function () { // 请求超时
             console.error('[XHR] Request timed out.');
-            isSending = false; // 释放锁
+            isSending = false; // **释放锁**
+            // Handle accumulated chunks after timeout
             if (isAccumulating && accumulatedChunks.length > 0) {
                 console.log("Processing accumulated chunks after timeout.");
                 const nextBlob = accumulatedChunks.shift();
                 if (accumulatedChunks.length === 0) isAccumulating = false;
-                console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                sendDataToServer(nextBlob, [], null);
+                if (nextBlob) {
+                    console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
+                    sendDataToServer(nextBlob, [], null);
+                } else {
+                    console.warn("Accumulated chunks array was manipulated unexpectedly.");
+                    isAccumulating = false;
+                }
             }
         };
 
-        xhr.send(formData); // 发送数据
-        console.log('Data sent to server.');
+        try {
+            xhr.send(formData); // 发送数据
+            console.log('Data send request initiated.');
+        } catch (sendError) {
+            console.error("[XHR] Error initiating send:", sendError);
+            isSending = false; // Ensure lock is released if send fails immediately
+            // Handle accumulation again? Or just log and stop?
+            isAccumulating = false; // Safer to just clear accumulation state on send error
+            accumulatedChunks = [];
+        }
     }
 
     /**
      * 将长消息拆分成适合弹幕发送的短片段。
-     * 规则：
-     *   1. 先尝试在空格处分段，保证每段 ≤ MAX_CHAT_LENGTH。
-     *   2. 若某段本身已超过上限，再进行二次等长切分。
+     * (此函数目前基于 Bilibili 的 20 字符限制，未来可能需要平台适配)
      * @param {string} message - 原始长消息
      * @returns {string[]}     - 拆分后的弹幕数组
      */
@@ -1067,150 +1971,166 @@
         const parts = [];
         if (!message) return parts;
 
+        // TODO: Make MAX_CHAT_LENGTH platform-dependent via adapter if needed
+        const currentMaxChatLength = MAX_CHAT_LENGTH; // Use constant for now
+
         // 若整体就不超长，直接返回
-        if (message.length <= MAX_CHAT_LENGTH) return [message];
+        if (message.length <= currentMaxChatLength) return [message];
 
-        const tokens = message.split(/\s+/);          // 先按空格切成词组
-        let current = '';
+        // 优先按常见标点符号和空格分割 (更自然的分段)
+        // 正则：匹配 空格、逗号、句号、感叹号、问号 (中英文)
+        const separators = /[\s,.!?，。！？]+/g;
+        let lastIndex = 0;
+        let currentPart = '';
 
-        const pushCurrent = () => {
-            if (!current) return;
-            // 如果当前片段仍然超限，就再按长度硬切
-            if (current.length > MAX_CHAT_LENGTH) {
-                for (let i = 0; i < current.length; i += MAX_CHAT_LENGTH) {
-                    parts.push(current.slice(i, i + MAX_CHAT_LENGTH));
+        // 尝试智能分割
+        let match;
+        while ((match = separators.exec(message)) !== null) {
+            const chunk = message.substring(lastIndex, match.index).trim();
+            const sep = match[0]; // 分隔符本身
+
+            if (chunk) { // Don't add empty chunks
+                const potentialPart = currentPart ? `${currentPart} ${chunk}` : chunk;
+                if (potentialPart.length <= currentMaxChatLength) {
+                    currentPart = potentialPart;
+                } else {
+                    // Current part is full, push it
+                    if (currentPart) parts.push(currentPart);
+                    // Start new part with the current chunk, *if* it fits
+                    if (chunk.length <= currentMaxChatLength) {
+                        currentPart = chunk;
+                    } else {
+                        // If the single chunk is too long, hard-split it immediately
+                        for (let i = 0; i < chunk.length; i += currentMaxChatLength) {
+                            parts.push(chunk.slice(i, i + currentMaxChatLength));
+                        }
+                        currentPart = ''; // Reset current part after hard split
+                    }
                 }
-            } else {
-                parts.push(current);
             }
-            current = '';
-        };
 
-        for (let i = 0; i < tokens.length; i++) {
-            const word = tokens[i];
-            // 预留 1 个空格（除第一个词外）
-            const tentative = current ? `${current} ${word}` : word;
+            // Try adding separator if space allows (optional, makes it look less split)
+            // if (currentPart && (currentPart + sep).length <= currentMaxChatLength) {
+            //    currentPart += sep;
+            // }
 
-            if (tentative.length > MAX_CHAT_LENGTH) {
-                pushCurrent();      // 先把 current 收进去
-                current = word;     // 开启新的片段
+            lastIndex = match.index + sep.length;
+        }
+
+        // Add the last part of the message
+        const finalChunk = message.substring(lastIndex).trim();
+        if (finalChunk) {
+            const potentialPart = currentPart ? `${currentPart} ${finalChunk}` : finalChunk;
+            if (potentialPart.length <= currentMaxChatLength) {
+                currentPart = potentialPart;
+                if (currentPart) parts.push(currentPart); // Push the potentially merged final part
             } else {
-                current = tentative;
+                // Push the existing currentPart first
+                if (currentPart) parts.push(currentPart);
+                // Hard-split the final chunk if it's too long
+                if (finalChunk.length <= currentMaxChatLength) {
+                    parts.push(finalChunk);
+                } else {
+                    for (let i = 0; i < finalChunk.length; i += currentMaxChatLength) {
+                        parts.push(finalChunk.slice(i, i + currentMaxChatLength));
+                    }
+                }
+            }
+        } else if (currentPart) {
+            // If message ended on a separator, push whatevers left in currentPart
+            parts.push(currentPart);
+        }
+
+        // Final check: If splitting somehow produced no parts but message existed, hard split the original
+        if (parts.length === 0 && message.length > 0) {
+            console.warn("Splitting logic failed, falling back to hard split.");
+            for (let i = 0; i < message.length; i += currentMaxChatLength) {
+                parts.push(message.slice(i, i + currentMaxChatLength));
             }
         }
-        pushCurrent(); // 别忘了收尾
 
         return parts;
     }
 
+    let isProcessingQueue = false; // Lock to prevent concurrent processing runs
+
     /**
      * 处理弹幕队列，一次发送一条消息，并带有延迟。
      */
-    function processChatQueue() {
+    async function processChatQueue() {
+        if (isProcessingQueue) {
+            // console.log("Chat queue processing already in progress.");
+            return;
+        }
         if (chatQueue.length === 0) {
             // console.log("Chat queue is empty.");
+            isProcessingQueue = false; // Release lock if queue becomes empty
             return;
         }
-        // 在发送前再次检查权限
-        if (!isChatPermissionGranted) {
-            console.log("Chat permission is OFF. Clearing remaining queue.");
+        // 在发送前再次检查权限 and agent running status
+        if (!isChatPermissionGranted || !isAgentRunning) {
+            console.log(`Chat permission (${isChatPermissionGranted}) or agent running (${isAgentRunning}) is false. Clearing remaining queue.`);
             chatQueue = [];
+            isProcessingQueue = false; // Release lock
             return;
         }
+
+        isProcessingQueue = true; // Acquire lock
 
         const message = chatQueue.shift(); // 从队列前面取出下一条消息
         console.log(`Processing chat queue. Remaining: ${chatQueue.length}. Next message: "${message}"`);
 
-        sendChatMessage(message) // 发送弹幕消息
-            .then(() => {
-                console.log(`Successfully sent chat: "${message}"`);
-                // 安排下一条消息（如果队列中还有）
-                if (chatQueue.length > 0) {
-                    const delay = getRandomInt(CHAT_SEND_DELAY_MIN_MS, CHAT_SEND_DELAY_MAX_MS);
-                    console.log(`Scheduling next chat message in ${delay}ms`);
-                    setTimeout(processChatQueue, delay);
-                }
-            })
-            .catch(error => {
-                console.error(`Failed to send chat message: "${message}". Error:`, error);
-                // 失败后仍尝试处理队列中的下一个（可以考虑重试逻辑）
-                if (chatQueue.length > 0) {
-                    const delay = getRandomInt(CHAT_SEND_DELAY_MIN_MS, CHAT_SEND_DELAY_MAX_MS);
-                    setTimeout(processChatQueue, delay);
-                }
-            });
-    }
+        try {
+            // Use the platform adapter to send the message
+            const status = await currentPlatformAdapter.sendChatMessage(message); // Adapter returns status
 
-    /**
-     * 在 Bilibili 界面中模拟输入和发送弹幕消息。
-     * @param {string} message - 要发送的消息字符串。
-     * @returns {Promise<void>} 一个 promise，在消息发送时解析，或在错误时拒绝。
-     */
-    function sendChatMessage(message) {
-        return new Promise((resolve, reject) => {
-            if (!message) {
-                return reject(new Error("Cannot send empty message."));
-            }
-            if (!isChatPermissionGranted) {
-                console.warn("Attempted to send chat message, but permission is OFF.");
-                return resolve();
-            }
-
-            // 更强兼容性的输入框与按钮选择器
-            const chatInput =
-                document.querySelector('.chat-input-panel textarea.chat-input') ||
-                document.querySelector('textarea.chat-input') ||
-                document.querySelector('textarea');
-
-            const sendButton =
-                document.querySelector('button.bl-button.live-skin-highlight-button-bg') ||
-                document.querySelector('button.bl-button--primary') ||
-                document.querySelector('button');
-
-            if (!chatInput) {
-                return reject(new Error("Chat input element not found. Cannot send message."));
-            }
-            if (!sendButton) {
-                return reject(new Error("Chat send button not found. Cannot send message."));
-            }
-
-            if (sendButton.disabled || sendButton.classList.contains('disabled') || sendButton.classList.contains('bl-button--disabled')) {
-                console.warn("Chat send button is disabled (cooldown?). Will retry queue later.");
-                chatQueue.unshift(message);
-                setTimeout(processChatQueue, getRandomInt(3000, 5000));
-                return reject(new Error("Send button disabled, rescheduling queue."));
-            }
-
-            console.log(`Attempting to send chat: "${message}"`);
-
-            try {
-                const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-                const changeEvent = new Event('change', { bubbles: true, cancelable: true });
-
-                chatInput.focus();
-                chatInput.value = message;
-                chatInput.dispatchEvent(inputEvent);
-                chatInput.dispatchEvent(changeEvent);
-
-                setTimeout(() => {
-                    if (!sendButton.disabled && !sendButton.classList.contains('disabled') && !sendButton.classList.contains('bl-button--disabled')) {
-                        sendButton.click();
-                        resolve();
+            switch (status) {
+                case 'success':
+                    console.log(`Successfully sent chat (via adapter): "${message}"`);
+                    // Schedule next only on success
+                    if (chatQueue.length > 0 && isAgentRunning && isChatPermissionGranted) {
+                        const delay = getRandomInt(CHAT_SEND_DELAY_MIN_MS, CHAT_SEND_DELAY_MAX_MS);
+                        console.log(`Scheduling next chat message in ${delay}ms`);
+                        setTimeout(() => { isProcessingQueue = false; processChatQueue(); }, delay); // Release lock before timeout
                     } else {
-                        console.warn("Send button became disabled just before clicking.");
-                        chatQueue.unshift(message);
-                        setTimeout(processChatQueue, getRandomInt(3000, 5000));
-                        reject(new Error("Send button became disabled, rescheduling queue."));
+                        isProcessingQueue = false; // Release lock if queue empty or permissions changed
+                        if (chatQueue.length > 0) processChatQueue(); // Try immediately if queue still has items after permission check
                     }
-                }, 150);
-
-            } catch (error) {
-                console.error("Error during chat simulation:", error);
-                chatQueue.unshift(message);
-                setTimeout(processChatQueue, getRandomInt(5000, 8000));
-                reject(error);
+                    break;
+                case 'disabled':
+                    console.warn(`Chat send button was disabled for message (via adapter): "${message}". Re-queuing.`);
+                    chatQueue.unshift(message); // Put message back at the front
+                    const retryDelayDisabled = getRandomInt(3000, 7000); // Delay before retry for disabled button
+                    console.log(`Scheduling chat queue retry in ${retryDelayDisabled}ms (button disabled).`);
+                    setTimeout(() => { isProcessingQueue = false; processChatQueue(); }, retryDelayDisabled); // Release lock before timeout
+                    break;
+                case 'not_found':
+                    console.error(`Chat input/button not found for message: "${message}". Cannot send. Discarding message and stopping queue for now.`);
+                    // Don't re-queue, likely a page structure issue. Keep queue for potential future fix?
+                    // chatQueue = []; // Option: Clear queue entirely on element not found
+                    isProcessingQueue = false; // Release lock
+                    break;
+                case 'not_implemented':
+                    console.error(`sendChatMessage is not implemented for ${currentPlatformAdapter.platformName}. Cannot send message: "${message}". Discarding.`);
+                    isProcessingQueue = false; // Release lock
+                    break;
+                case 'error':
+                default: // Treat any other non-success status as a retryable error
+                    console.error(`Adapter failed to send chat message: "${message}" (Status: ${status || 'unknown adapter error'}). Re-queuing.`);
+                    chatQueue.unshift(message); // Put message back
+                    const retryDelayError = getRandomInt(5000, 10000); // Longer delay on error
+                    console.log(`Scheduling chat queue retry in ${retryDelayError}ms (adapter error).`);
+                    setTimeout(() => { isProcessingQueue = false; processChatQueue(); }, retryDelayError); // Release lock before timeout
+                    break;
             }
-        });
+        } catch (error) {
+            // Catch errors from the adapter promise itself (e.g., if adapter code throws)
+            console.error(`Error during adapter sendChatMessage execution for: "${message}". Error:`, error);
+            chatQueue.unshift(message); // Requeue on exception too
+            const retryDelayException = getRandomInt(5000, 10000);
+            console.log(`Scheduling chat queue retry in ${retryDelayException}ms (adapter exception).`);
+            setTimeout(() => { isProcessingQueue = false; processChatQueue(); }, retryDelayException); // Release lock before timeout
+        }
     }
 
     /**
@@ -1226,6 +2146,6 @@
     }
 
     // --- 脚本入口点 ---
-    console.log("Live Stream Chat AI Agent script loaded.");
+    console.log("Live Stream Chat AI Agent script loaded (Refactored).");
 
 })(); // IIFE 结束
