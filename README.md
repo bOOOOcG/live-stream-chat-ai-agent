@@ -34,7 +34,7 @@ It consists of two main parts:
     *   YouTube Live (`youtube.com`)
     *   Bilibili Live (`live.bilibili.com`)
 *   **Planned Future Support:**
-    *   Twitch
+    *   Twitch (`twitch.com`)
     *   Huya.com ([huya.com](https://www.huya.com/))
     *   Douyu.com ([douyu.com](https://douyu.com/))
     *   Other popular platforms (contributions welcome!)
