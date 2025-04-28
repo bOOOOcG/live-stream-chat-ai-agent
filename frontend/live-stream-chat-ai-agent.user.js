@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.1.0
+// @version      1.1.1
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -18,7 +18,8 @@
     // --- 常量定义 ---
     const API_ENDPOINT = 'https://your_server_address:8181/upload'; // 后端 API 地址
     const RECORDING_INTERVAL_MS = 30000; // 30 秒 - 录制分块时长
-    const MAX_CHAT_LENGTH = 20; // 每条弹幕消息分段的最大长度 (Bilibili specific, might need adapter)
+    const MAX_CHAT_LENGTH = 20; // 每条弹幕消息分段的最大长度 (默认值 一般会被已知平台的最优值替代)
+    const FORCE_CHAT_LENGTH = 0; // 0 = 不强制，如果大于0，比如10，就强制每10字符切割为一个弹幕
     const CHAT_SEND_DELAY_MIN_MS = 3000; // 发送弹幕消息之间的最小延迟（毫秒）
     const CHAT_SEND_DELAY_MAX_MS = 6000; // 发送弹幕消息之间的最大延迟（毫秒）
     const SCREENSHOT_WIDTH = 1280; // 期望的截图宽度
@@ -1991,7 +1992,7 @@
 
     /**
      * 将长消息拆分成适合弹幕发送的短片段。
-     * (此函数目前基于 Bilibili 的 20 字符限制，未来可能需要平台适配)
+     * 支持平台适配和强制覆盖切分长度。
      * @param {string} message - 原始长消息
      * @returns {string[]}     - 拆分后的弹幕数组
      */
@@ -1999,79 +2000,68 @@
         const parts = [];
         if (!message) return parts;
 
-        // TODO: Make MAX_CHAT_LENGTH platform-dependent via adapter if needed
-        const currentMaxChatLength = MAX_CHAT_LENGTH; // Use constant for now
+        // 动态决定切分长度
+        let currentMaxChatLength = MAX_CHAT_LENGTH; // 默认
+
+        if (FORCE_CHAT_LENGTH > 0) {
+            currentMaxChatLength = FORCE_CHAT_LENGTH;
+        } else if (currentPlatformAdapter?.platformName === 'YouTube') {
+            currentMaxChatLength = 100; // YouTube专用
+        } else if (currentPlatformAdapter?.platformName === 'Bilibili') {
+            currentMaxChatLength = 20; // Bilibili专用（其实就是MAX_CHAT_LENGTH）
+        }
 
         // 若整体就不超长，直接返回
         if (message.length <= currentMaxChatLength) return [message];
 
-        // 优先按常见标点符号和空格分割 (更自然的分段)
-        // 正则：匹配 空格、逗号、句号、感叹号、问号 (中英文)
+        // 智能分割，优先按标点和空格
         const separators = /[\s,.!?，。！？]+/g;
         let lastIndex = 0;
         let currentPart = '';
 
-        // 尝试智能分割
         let match;
         while ((match = separators.exec(message)) !== null) {
             const chunk = message.substring(lastIndex, match.index).trim();
-            const sep = match[0]; // 分隔符本身
+            const sep = match[0];
 
-            if (chunk) { // Don't add empty chunks
+            if (chunk) {
                 const potentialPart = currentPart ? `${currentPart} ${chunk}` : chunk;
                 if (potentialPart.length <= currentMaxChatLength) {
                     currentPart = potentialPart;
                 } else {
-                    // Current part is full, push it
                     if (currentPart) parts.push(currentPart);
-                    // Start new part with the current chunk, *if* it fits
                     if (chunk.length <= currentMaxChatLength) {
                         currentPart = chunk;
                     } else {
-                        // If the single chunk is too long, hard-split it immediately
                         for (let i = 0; i < chunk.length; i += currentMaxChatLength) {
                             parts.push(chunk.slice(i, i + currentMaxChatLength));
                         }
-                        currentPart = ''; // Reset current part after hard split
+                        currentPart = '';
                     }
                 }
             }
-
-            // Try adding separator if space allows (optional, makes it look less split)
-            // if (currentPart && (currentPart + sep).length <= currentMaxChatLength) {
-            //    currentPart += sep;
-            // }
-
             lastIndex = match.index + sep.length;
         }
 
-        // Add the last part of the message
+        // 处理最后一段
         const finalChunk = message.substring(lastIndex).trim();
         if (finalChunk) {
             const potentialPart = currentPart ? `${currentPart} ${finalChunk}` : finalChunk;
             if (potentialPart.length <= currentMaxChatLength) {
                 currentPart = potentialPart;
-                if (currentPart) parts.push(currentPart); // Push the potentially merged final part
-            } else {
-                // Push the existing currentPart first
                 if (currentPart) parts.push(currentPart);
-                // Hard-split the final chunk if it's too long
-                if (finalChunk.length <= currentMaxChatLength) {
-                    parts.push(finalChunk);
-                } else {
-                    for (let i = 0; i < finalChunk.length; i += currentMaxChatLength) {
-                        parts.push(finalChunk.slice(i, i + currentMaxChatLength));
-                    }
+            } else {
+                if (currentPart) parts.push(currentPart);
+                for (let i = 0; i < finalChunk.length; i += currentMaxChatLength) {
+                    parts.push(finalChunk.slice(i, i + currentMaxChatLength));
                 }
             }
         } else if (currentPart) {
-            // If message ended on a separator, push whatevers left in currentPart
             parts.push(currentPart);
         }
 
-        // Final check: If splitting somehow produced no parts but message existed, hard split the original
+        // 如果仍然为空（极端情况），硬切
         if (parts.length === 0 && message.length > 0) {
-            console.warn("Splitting logic failed, falling back to hard split.");
             for (let i = 0; i < message.length; i += currentMaxChatLength) {
                 parts.push(message.slice(i, i + currentMaxChatLength));
             }
@@ -2081,7 +2071,6 @@
     }
 
     let isProcessingQueue = false; // Lock to prevent concurrent processing runs
-
     /**
      * 处理弹幕队列，一次发送一条消息，并带有延迟。
      */
