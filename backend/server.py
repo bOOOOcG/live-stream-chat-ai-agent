@@ -226,6 +226,12 @@ class LiveAssistantServer:
         self.youdao_app_key = get_env_str("YOUDAO_APP_KEY")
         self.youdao_app_secret = get_env_str("YOUDAO_APP_SECRET")
         self.youdao_api_url = get_env_str('YOUDAO_API_URL', 'https://openapi.youdao.com/asrapi')
+        # Whisper专用API（如果没有设置就回退到 LLM通用API）
+        self.whisper_api_url = get_env_str("WHISPER_API_URL", self.llm_api_url)
+        self.whisper_api_key = get_env_str("WHISPER_API_KEY", self.llm_api_key)
+
+        print(f"Whisper Config: URL='{self.whisper_api_url}', Key={'Set' if self.whisper_api_key else 'Not Set'}")
+        
         self.use_youdao_stt = 'youdao' in self.stt_provider or 'both' in self.stt_provider
         self.use_whisper_stt = 'whisper' in self.stt_provider or 'both' in self.stt_provider
 
@@ -669,15 +675,15 @@ class LiveAssistantServer:
     def _recognize_speech_whisper(self, audio_path: Path) -> Optional[str]:
         """Calls the Whisper STT API via the configured OpenAI-compatible endpoint."""
         # Requires LLM_API_KEY and LLM_API_URL to be set
-        if not self.llm_api_key or not self.llm_api_url:
-             print("Cannot perform Whisper STT: LLM API Key or URL is missing.")
-             return None
+        if not self.whisper_api_key or not self.whisper_api_url:
+            print("Cannot perform Whisper STT: Whisper API Key or URL is missing.")
+            return None
 
         # Construct the specific API endpoint for audio transcriptions
         # Handle potential trailing slashes in the base URL
-        base_url = self.llm_api_url.rstrip('/')
+        base_url = self.whisper_api_url.rstrip('/')
         api_url = f'{base_url}/audio/transcriptions'
-        headers = {'Authorization': f'Bearer {self.llm_api_key}'}
+        headers = {'Authorization': f'Bearer {self.whisper_api_key}'}
 
         try:
             with audio_path.open('rb') as audio_file:
