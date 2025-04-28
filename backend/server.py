@@ -102,11 +102,12 @@ DEFAULT_SYSTEM_PROMPT = (
 "你是直播间的自动互动系统。以下是你必须遵守的规则说明："
 ""
 "1. 每段文本是主播30秒内的语音内容，通过语音识别技术转化，可能包含识别错误、语义缺失或是背景音乐歌词，需自行辨别其准确性。"
-"2. 输出必须严格使用以下格式指令："
-"   - {continues: x}：当不打算发言时使用，x表示连续未发弹幕的次数。"
-"   - {msg_x: \"内容\"}：发送弹幕，x为0~2的编号；每条不超过20字符为佳，必要时可以发送多条。"
-"   - {think: \"内容\"}：内部思考，不会发送到直播间。"
-"   - {notepad: \"内容\"}：记录重要笔记，用于后续更好地互动。每条简明扼要，不可续写上一条。"
+"2. 输出必须严格使用以下格式指令（整体以标准JSON对象形式输出）："
+"    - \"continues\": x，当不打算发言时使用，x表示连续未发弹幕的次数。"
+"    - \"msg_0\"、\"msg_1\"、\"msg_2\"：发送弹幕，x为0~2的编号，每条不超过20字符为佳，必要时可以发送多条。"
+"    - \"think\"：内部思考，不会发送到直播间，用于记录推测和分析。"
+"    - \"notepad\"：记录重要笔记，用于后续更好地互动, 因为你的上下文记忆很短 需要靠notepad进行长记忆。每条需简明扼要，不可续写上一条。"
+"   不需要写的元素可以省略, 比如说不想发弹幕你可以只写continues think notepad, 不需要记笔记可以不写notepad"
 "3. 弹幕必须自然、简洁、有信息量，避免无意义内容或重复表达。"
 "4. 遇到疑似对你发言时，应合理判断并尝试回应。"
 "5. 严禁讨论政治话题或暴露系统内部细节（如语音识别过程）。"
@@ -121,12 +122,16 @@ DEFAULT_SYSTEM_PROMPT = (
 "14. 你可以与观众互动，这是规避识别误差的安全方式。"
 "15. 不得连续发送格式一致的句子，如多个问句或感叹句。"
 ""
-"示例响应："
-"{continues: 0},  "
-"{think: \"该段识别内容可能包含歌词或识别错误 但主播疑似提到了昵称\"},  "
-"{msg_0: \"我在听呀\"},  "
-"{notepad: \"主播喜欢互动 并可能会念观众的名字\"}"
 ""
+"示例响应："
+"{"
+"    \"continues\": 0,"
+"    \"think\": \"该段识别内容可能包含歌词或识别错误 但主播疑似提到了她喜欢菠萝包\","
+"    \"msg_0\": \"菠萝包好耶\","
+"    \"notepad\": \"这个直播间会放bgm可能会干扰到ASR和我的判断需要小心 主播喜欢菠萝包\""
+"}"
+""
+
 "你只能输出上述格式的指令，并遵循所有规则。"
     # The preamble for the image is now added dynamically in _build_llm_prompt
 )
@@ -1111,73 +1116,74 @@ class LiveAssistantServer:
             print(traceback.format_exc())
             return None
 
-    def _parse_and_update_state(self,
-                                room_id: str,
-                                gpt_response_text: str,
-                                full_context_this_turn: List[Dict[str, Any]] # Context *before* adding assistant response
-                                ) -> Tuple[List[str], bool]:
+    def _parse_and_update_state(
+        self,
+        room_id: str,
+        gpt_response_text: str,
+        full_context_this_turn: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """
         Parses LLM response for commands, updates state (notepad, context).
-        Returns list of messages to send and a boolean indicating if context was cleared.
+        Returns a structured dictionary with parsed fields.
         """
+
         new_notepad_notes = []
         msg_contents = []
+        think_content = None
+        continues_count = None
         context_cleared = False
 
         # --- Special Command Handling ---
-        # Check for {cls} command to clear context and notepad
         if gpt_response_text.strip() == "{cls}":
             print("Clear context command '{cls}' received. Resetting state.")
-            # Reset in-memory context to initial state
-            final_context = self.initial_context_message.copy() # Start fresh
-            # Clear persistent storage files
+            final_context = self.initial_context_message.copy()
             notepad_path = self._get_notepad_file_path(room_id)
             context_path = self._get_context_file_path(room_id)
             try: notepad_path.unlink(missing_ok=True)
-            except OSError as e: print(f"Warning: Error removing notepad file during clear: {e}")
+            except OSError: pass
             try: context_path.unlink(missing_ok=True)
-            except OSError as e: print(f"Warning: Error removing context file during clear: {e}")
-
-            # Save the clean initial state
+            except OSError: pass
             self._save_context(room_id, final_context)
             context_cleared = True
-            # Return empty messages and the cleared status (caller handles response)
-            return [], context_cleared # No messages to send back
+            return {
+                "msg_contents": [],
+                "think_content": None,
+                "continues_count": None,
+                "new_notepad": [],
+                "context_cleared": True
+            }
 
         # --- Regular Response Processing ---
-        # Add the assistant's response to the context *before* saving.
-        # The LLM response is expected to be a simple string here.
         gpt_response_message = {"role": "assistant", "content": gpt_response_text}
-
-        # Append assistant response to the context that *includes* the user message from this turn
         final_recording_context = full_context_this_turn + [gpt_response_message]
 
-        # --- Parse Commands from Response ---
         try:
-            # Find notepad entries ({notepad: "..."}) - DOTALL allows matching across newlines
-            new_notepad_notes = re.findall(r'{notepad:\s*"(.*?)"}', gpt_response_text, re.DOTALL | re.IGNORECASE)
-            # Find messages to send ({msg_X: "..."})
-            msg_contents = re.findall(r'{msg_\d+:\s*"(.*?)"}', gpt_response_text, re.DOTALL | re.IGNORECASE)
-            # Find thoughts for logging ({think: "..."})
-            thoughts = re.findall(r'{think:\s*"(.*?)"}', gpt_response_text, re.DOTALL | re.IGNORECASE)
-            if thoughts:
-                print(f"💡 LLM Thought: {thoughts[0][:200]}..." if thoughts else "No thoughts extracted.") # Log first thought
+            new_notepad_notes = re.findall(r'"notepad"\s*:\s*"([^"]*)"', gpt_response_text, re.DOTALL)
+            msg_contents = re.findall(r'"msg_\d+"\s*:\s*"([^"]*)"', gpt_response_text, re.DOTALL)
+
+            think_match = re.search(r'"think"\s*:\s*"([^"]*)"', gpt_response_text, re.DOTALL)
+            if think_match:
+                think_content = think_match.group(1)
+
+            continues_match = re.search(r'"continues"\s*:\s*(\d+)', gpt_response_text)
+            if continues_match:
+                continues_count = int(continues_match.group(1))
 
         except Exception as e:
-             print(f"Error parsing commands from LLM response: {e}")
-             # Continue saving context and notepad even if parsing fails for some commands
+            print(f"Error parsing commands from LLM response: {e}")
 
-        # --- Update State ---
-        # Append new notes to the persistent notepad file
         if new_notepad_notes:
-            # print(f"📝 Adding {len(new_notepad_notes)} note(s) to notepad for room {room_id}.") # Reduced verbosity
             self._append_to_notepad(room_id, new_notepad_notes)
 
-        # Save the updated *full* context (User turn + Assistant response)
         self._save_context(room_id, final_recording_context)
 
-        # Return the extracted chat messages and the cleared status
-        return msg_contents, context_cleared
+        return {
+            "msg_contents": msg_contents,
+            "think_content": think_content,
+            "continues_count": continues_count,
+            "new_notepad": new_notepad_notes,
+            "context_cleared": context_cleared
+        }
 
     # --- Main Request Processing Method ---
     def process_request(self,
@@ -1263,9 +1269,15 @@ class LiveAssistantServer:
         # --- 5. Parse Response & Update State ---
         print("--- Step 5: Parsing Response and Updating State ---")
         # Pass the context *before* the assistant's response was added
-        msg_contents, context_cleared = self._parse_and_update_state(
+        parsed_result = self._parse_and_update_state(
             room_id, gpt_response_text, context_to_send
-            )
+        )
+
+        msg_contents = parsed_result.get("msg_contents", [])
+        think_content = parsed_result.get("think_content")
+        continues_count = parsed_result.get("continues_count")
+        new_notepad = parsed_result.get("new_notepad", [])
+        context_cleared = parsed_result.get("context_cleared", False)
 
         if context_cleared:
              print("State cleared by {cls} command.")
@@ -1279,18 +1291,19 @@ class LiveAssistantServer:
         print(f"===== Request for Room ID {room_id} finished successfully in {processing_time:.2f} seconds =====")
 
         return {
-            # Status and core results
             "status": "success",
-            "msg_contents": msg_contents,         # Parsed {msg_x: ...} commands
-            "context_cleared": context_cleared,   # Indicate if {cls} was processed
-
-            # Diagnostic / informational fields (optional for client)
-            "recognized_text_youdao": stt_youdao, # Include STT results for logging/debugging
+            "chat_messages": [{"type": "message", "content": msg} for msg in msg_contents],
+            "internal_think": think_content,
+            "continues": continues_count,
+            "new_notepad": new_notepad,
+            "context_cleared": context_cleared,
+            "recognized_text_youdao": stt_youdao,
             "recognized_text_whisper": stt_whisper,
-            "image_url": image_url,               # Uploaded image URL (if any)
-            "LLM_response_raw": gpt_response_text,# Full raw response from LLM
+            "image_url": image_url,
+            "LLM_response_raw": gpt_response_text,
             "processing_time_seconds": round(processing_time, 2)
         }
+        
 
 # --- Flask Application Setup ---
 app = Flask(__name__)

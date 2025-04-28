@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.0.0
+// @version      1.1.0
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -409,13 +409,13 @@
 
                             // --- 3. 检查时间戳是否在允许的集合中 ---
                             isAllowed = allowedVisibleTimestamps.has(messageVisibleStr);
-                            console.log(`[YT 聊天项 #${index}] 可见时间: "${messageVisibleStr}", 在允许集合 (${[...allowedVisibleTimestamps].join(',')}) 中?: ${isAllowed}`);
+                            // console.log(`[YT 聊天项 #${index}] 可见时间: "${messageVisibleStr}", 在允许集合 (${[...allowedVisibleTimestamps].join(',')}) 中?: ${isAllowed}`);
                         } else {
-                            console.log(`[YT 聊天项 #${index}] 找不到可见时间戳 span#timestamp`);
+                            // console.log(`[YT 聊天项 #${index}] 找不到可见时间戳 span#timestamp`);
                         }
 
                         if (isAllowed) {
-                            console.log(`          -> 包含此消息 (基于可见时间)`);
+                            // console.log(`          -> 包含此消息 (基于可见时间)`);
                             const authorName = el.querySelector('#author-name')?.textContent.trim() || '未知';
                             let message = '';
                             // ... (提取 message 的逻辑不变，和之前的版本一样) ...
@@ -1763,6 +1763,37 @@
     // }
 
     /**
+     * 解析后端返回的 JSON，提取我们关注的字段
+     * @param {object} resp 后端返回的 JSON 对象
+     * @returns {{
+    *   messages: string[],
+    *   think: string|null,
+    *   continues: number|null,
+    *   notepadNotes: string[],
+    *   contextCleared: boolean,
+    *   youdao: string|null,
+    *   whisper: string|null,
+    *   imageUrl: string|null,
+    *   raw: string
+    * }}
+    */
+    function parseServerResponse(resp) {
+        return {
+            messages: Array.isArray(resp.chat_messages)
+                ? resp.chat_messages.map(item => item.content).filter(c => typeof c === 'string' && c.trim())
+                : [],
+            think: resp.internal_think || null,
+            continues: resp.continues != null ? resp.continues : null,
+            notepadNotes: Array.isArray(resp.new_notepad) ? resp.new_notepad : [],
+            contextCleared: !!resp.context_cleared,
+            youdao: resp.recognized_text_youdao || null,
+            whisper: resp.recognized_text_whisper || null,
+            imageUrl: resp.image_url || null,
+            raw: resp.LLM_response_raw || ''
+        };
+    }
+
+    /**
      * 将音频、弹幕消息和截图发送到后端 API。
      * 处理累积逻辑。
      * @param {Blob|null} audioBlob - 录制的音频数据 (可以是 null).
@@ -1840,74 +1871,71 @@
         xhr.onreadystatechange = function () {
             if (xhr.readyState === 4) { // 请求完成
                 console.log(`[XHR] Upload complete. Status: ${xhr.status}`);
-                isSending = false; // **释放锁 - moved here, crucial**
+                isSending = false; // **释放锁**
 
                 if (xhr.status >= 200 && xhr.status < 300) { // Success range
+                    console.log('Server Response:', resp);
                     try {
-                        const response = JSON.parse(xhr.responseText);
-                        console.log('Server Response:', response); // Log the whole response
+                        const resp = JSON.parse(xhr.responseText);
 
-                        if (response.status === 'success') {
+                        if (resp.status === 'success') {
                             console.log('Server processed data successfully.');
-                            console.log('> Recognized text:', response.recognized_text || "N/A");
-                            console.log('> AI Response:', response.LLM_response || "N/A");
 
-                            // 排队发送 AI 回复
-                            let msgContents = response.msg_contents; // Assume backend sends this field
-                            if (Array.isArray(msgContents) && msgContents.length > 0) {
+                            // —— 新：统一解析后端结构 ——
+                            const parsed = parseServerResponse(resp);
+
+                            console.log('> Youdao STT    :', parsed.youdao);
+                            console.log('> Whisper STT   :', parsed.whisper);
+                            console.log('> Internal Think:', parsed.think);
+                            console.log('> Continues     :', parsed.continues);
+                            console.log('> Notepad Notes :', parsed.notepadNotes);
+                            console.log('> Image URL     :', parsed.imageUrl);
+
+                            // —— 处理弹幕消息 —— 
+                            if (parsed.messages.length > 0) {
                                 if (isChatPermissionGranted) {
-                                    console.log(`Queueing ${msgContents.length} message(s) from AI.`);
-                                    let validMessages = 0;
-                                    msgContents.forEach(msgContent => {
-                                        if (typeof msgContent === 'string' && msgContent.trim()) {
-                                            // Use the 'splitMessage' function for consistency
-                                            const messageParts = splitMessage(msgContent.trim());
-                                            chatQueue.push(...messageParts);
-                                            validMessages += messageParts.length;
-
-                                        } else {
-                                            console.warn("Received non-string or empty message from AI, discarding:", msgContent);
-                                        }
+                                    console.log(`Queueing ${parsed.messages.length} message(s) from AI.`);
+                                    parsed.messages.forEach(msgContent => {
+                                        const parts = splitMessage(msgContent);
+                                        chatQueue.push(...parts);
                                     });
-                                    if (validMessages > 0) {
-                                        // Only process if actual messages were queued
-                                        processChatQueue(); // Start processing queue immediately if not already running
-                                    }
+                                    processChatQueue();
                                 } else {
                                     console.log("AI provided messages, but chat permission is OFF. Messages discarded.");
                                 }
                             } else {
                                 console.log('No actionable chat messages received from AI response.');
                             }
+
                         } else {
-                            // Handle specific known error messages from backend if possible
-                            console.error('Server returned an application error:', response.message || "No error message provided.", response);
+                            console.error(
+                                'Server returned an application error:',
+                                resp.message || "No error message provided.",
+                                resp
+                            );
                         }
                     } catch (e) {
                         console.error('Failed to parse JSON response:', e);
                         console.error('Raw Response Text:', xhr.responseText);
                     }
                 } else {
-                    // Handle HTTP errors more specifically
+                    // HTTP 错误
                     console.error(`Failed to send data. HTTP Status: ${xhr.status} ${xhr.statusText}`);
-                    console.error('Response Text:', xhr.responseText); // Log response even on error
-                    // Maybe implement retry logic here for certain status codes (e.g., 503 Service Unavailable)
+                    console.error('Response Text:', xhr.responseText);
                 }
 
-                // ** Check for accumulated chunks AFTER releasing lock and processing response **
+                // —— 处理累积的音频块 —— 
                 if (isAccumulating && accumulatedChunks.length > 0) {
                     console.log("Processing accumulated chunks immediately after send completion.");
-                    // Dequeue the next blob carefully
                     const nextBlob = accumulatedChunks.shift();
                     if (accumulatedChunks.length === 0) isAccumulating = false;
 
                     if (nextBlob) {
                         console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                        // Note: no new chats or screenshotBlob are passed here
                         sendDataToServer(nextBlob, [], null);
                     } else {
                         console.warn("Accumulated chunks array was manipulated unexpectedly.");
-                        isAccumulating = false; // Reset state
+                        isAccumulating = false;
                     }
                 }
             }
