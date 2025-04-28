@@ -901,28 +901,91 @@ def main():
     config['LLM_TOKENIZER_MODEL'] = ask_string("用于计数的 Tokenizer 模型 (输入GPT-4/GPT-4o/GPT-3.5)", default=config.get('LLM_TOKENIZER_MODEL', config.get('LLM_API_MODEL', 'gpt-4o')))
     config['LLM_MAX_RESPONSE_TOKENS'] = ask_integer("LLM 一次最多生成 Token 数", default=int(config.get('LLM_MAX_RESPONSE_TOKENS', 2000)), min_val=50)
     config['PROMPT_MAX_TOTAL_TOKENS'] = ask_integer("总提示+响应缓冲区最大 Token 数", default=int(config.get('PROMPT_MAX_TOTAL_TOKENS', 4096)), min_val=512)
+   
+    # --- 5. STT 配置 (自动设置 FFMPEG & Whisper) ---
+    print_step(5, "语音转文字 (STT) 配置")
+
+    stt_provider = ask_choice(
+        "选择 STT 提供商:",
+        ['youdao', 'whisper', 'both', 'compare'],
+        default=config.get('STT_PROVIDER', 'youdao')
+    )
+    config['STT_PROVIDER'] = stt_provider
+
+    # ---------- Youdao ---------- #
+    if stt_provider in ['youdao', 'both', 'compare']:
+        if ask_yes_no("需要打开有道智云官网 (申请 Key/Secret)?", default='yes'):
+            webbrowser.open("https://ai.youdao.com/")
+        print_info("请选择【智能语音服务 → 短语音识别】产品获取 Key/Secret。")
+        config['YOUDAO_APP_KEY']    = ask_string("有道 App Key (应用ID)", default=config.get('YOUDAO_APP_KEY'),    required=True, secret=True)
+        config['YOUDAO_APP_SECRET'] = ask_string("有道 App Secret",       default=config.get('YOUDAO_APP_SECRET'), required=True, secret=True)
+
+        # FFMPEG（仅 Youdao 用到）
+        if ffmpeg_path:
+            config['FFMPEG_PATH'] = ffmpeg_path
+            print_success(f"已自动配置 FFMPEG_PATH 为: {ffmpeg_path}")
+        else:
+            print_error("FFmpeg 未能自动设置，但有道 STT 需要它。")
+            config['FFMPEG_PATH'] = ask_path(
+                "请输入 FFmpeg 可执行文件完整路径",
+                default=config.get('FFMPEG_PATH', 'ffmpeg'),
+                must_exist=True, is_file=True, ensure_executable=True
+            )
+            if not run_command([config['FFMPEG_PATH'], '-version'], capture_output=True):
+                print_error(f"提供的 FFmpeg 路径 '{config['FFMPEG_PATH']}' 无法执行 → 有道 STT 将会失败！")
+    else:
+        config['YOUDAO_APP_KEY'] = ''
+        config['YOUDAO_APP_SECRET'] = ''
+
     # --- 5. STT 配置 (自动设置 FFMPEG) ---
     print_step(5, "语音转文字 (STT) 配置")
     stt_provider = ask_choice("选择 STT 提供商:", ['youdao', 'whisper', 'both', 'compare'], default=config.get('STT_PROVIDER', 'youdao'))
     config['STT_PROVIDER'] = stt_provider
-    if stt_provider in ['youdao', 'both']:
-        if ask_yes_no("需要打开有道智云官网 (申请 Key/Secret)?", default='yes'): webbrowser.open("https://ai.youdao.com/")
-        print_info(f"请选择 智能语音服务 - 短语音识别")
-        config['YOUDAO_APP_KEY'] = ask_string("有道 App Key (也就是应用ID)", default=config.get('YOUDAO_APP_KEY'), required=True, secret=True)
+    
+    # ---- 有道配置 ----
+    if stt_provider in ['youdao', 'both', 'compare']:
+        if ask_yes_no("需要打开有道智云官网 (申请 Key/Secret)?", default='yes'):
+            webbrowser.open("https://ai.youdao.com/")
+        print_info("请选择【智能语音服务 - 短语音识别】。")
+        config['YOUDAO_APP_KEY'] = ask_string("有道 App Key (应用ID)", default=config.get('YOUDAO_APP_KEY'), required=True, secret=True)
         config['YOUDAO_APP_SECRET'] = ask_string("有道 App Secret", default=config.get('YOUDAO_APP_SECRET'), required=True, secret=True)
-        # Configure FFMPEG path
+    
+        # 配置 FFMPEG
         if ffmpeg_path:
             config['FFMPEG_PATH'] = ffmpeg_path
             print_success(f"已自动配置 FFMPEG_PATH 为: {ffmpeg_path}")
-        else: # Auto setup failed or skipped
+        else:
             print_error("FFmpeg 未能自动设置成功，但有道 STT 需要它。")
             config['FFMPEG_PATH'] = ask_path("请输入 FFmpeg 可执行文件的完整路径", default=config.get('FFMPEG_PATH', 'ffmpeg'), must_exist=True, is_file=True, ensure_executable=True)
-            # Verify manually entered path
+            # 验证输入路径是否可用
             verif_cmd = [config['FFMPEG_PATH'], '-version']
             if not run_command(verif_cmd, capture_output=True):
-                 print_error(f"提供的 FFmpeg 路径 '{config['FFMPEG_PATH']}' 无法执行或无效。有道 STT 将会失败！")
-    else: config['YOUDAO_APP_KEY'] = ''; config['YOUDAO_APP_SECRET'] = ''
-
+                print_error(f"提供的 FFmpeg 路径 '{config['FFMPEG_PATH']}' 无法执行。有道 STT 将会失败！")
+    else:
+        config['YOUDAO_APP_KEY'] = ''
+        config['YOUDAO_APP_SECRET'] = ''
+    
+        # ---- Whisper配置 ----
+        if stt_provider in ['whisper', 'both', 'compare']:
+            print_info("Whisper API 配置：")
+            print_info("示例 - OpenAI官方: https://api.openai.com/v1/audio/transcriptions")
+            print_info("示例 - 本地whisper.cpp: http://localhost:9000/v1/audio/transcriptions")
+            config['WHISPER_API_URL'] = ask_string(
+                "Whisper API URL",
+                default=config.get('WHISPER_API_URL', 'https://api.openai.com/v1/audio/transcriptions'),
+                required=True,
+                validation_func=lambda u: (u.startswith("http"), "URL 应以 http 或 https 开头")
+            )
+            config['WHISPER_API_KEY'] = ask_string(
+                "Whisper API Key (本地部署可留空)",
+                default=config.get('WHISPER_API_KEY', ''),
+                required=False,
+                secret=True
+            )
+        else:
+            config['WHISPER_API_URL'] = ''
+            config['WHISPER_API_KEY'] = ''
+        
     # --- 6. Vision / 7. Other / 8. Save Config (Same logic) ---
     print_step(6, "视觉/截图 配置 (可选)")
     # ... (Enable, provider, keys/folder logic...)
@@ -953,6 +1016,24 @@ def main():
     if ask_yes_no("确认保存?", default='yes'):
         if not save_env(ENV_FILE, config, chosen_template): print_error("保存失败!"); sys.exit(1)
     else: print("配置未保存，已退出。"); sys.exit(0)
+
+    # --- 8b. Manual .env review (NEW) ---------------------------------
+    print_step("8b", ".env 手动复核 / 二次编辑")
+    print_info("⚠️  脚本会努力保持 .env 示例与代码同步，但难免有遗漏。")
+    print_info("    建议在继续之前，再手动检查一次 .env：")
+    print("    1) 打开编辑器查看：", ENV_FILE.resolve())
+    print("    2) 确认所有未填写参数, 和已填写参数是否正确")
+    print("    3) 如果你不确定某个变量的用途，可以先留空，之后随时再手动编辑env")
+    if ask_yes_no("是否现在立即在系统默认编辑器中打开 .env？", default="yes"):
+        try:
+            webbrowser.open(str(ENV_FILE.resolve()))
+            print_success(".env 已在外部编辑器中打开。保存后回到本窗口继续。")
+        except Exception as e:
+            print_warning(f"自动打开失败：{e}")
+            print_info(f"请手动打开 {ENV_FILE.resolve()} 进行查看。")
+    else:
+        print_info("好的，稍后你可以随时手动编辑 .env 以确保配置完整。")
+    print_separator()
 
     # --- 9. Frontend Setup Guidance ---
     print_step(9, "前端用户脚本设置指导")
