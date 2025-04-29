@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.2.0
+// @version      1.3.0
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -31,6 +31,9 @@
     const platformAdapters = {
         bilibili: {
             platformName: "Bilibili",
+            chatContainerSelector: '#chat-items', // 聊天容器的选择器
+            chatMessageSelector: '.chat-item.danmaku-item', // 新聊天消息元素的选择器
+            
             isApplicable: () => window.location.hostname.includes('live.bilibili.com'),
 
             /**
@@ -53,114 +56,75 @@
             },
 
             /**
-            * 从 DOM 中收集在最后录制间隔内的弹幕消息。(Bilibili)
-            * @param {number} recordingStartTimestamp - 录制开始时间戳 (ms)
-            * @param {number} recordingEndTimestamp - 录制结束时间戳 (ms)
-            * @returns {Array<object>} 弹幕消息对象的数组。
+            * 获取 Bilibili 聊天容器的 DOM 节点
+            * @returns {Node|null} 聊天容器节点或 null
             */
-            collectChatMessages: (recordingStartTimestamp, recordingEndTimestamp) => {
-                const newChats = []; // 初始化用于存储新弹幕的数组
-                // 查找弹幕元素，优先使用 .danmaku-item
-                let chatElements = document.querySelectorAll('.danmaku-item');
+            getChatContainerNode: function () {
+                return document.querySelector(this.chatContainerSelector);
+            },
 
-                // 如果找不到 .danmaku-item，尝试备用选择器 .chat-item
-                if (!chatElements || chatElements.length === 0) {
-                    chatElements = document.querySelectorAll('.chat-item');
-                    if (!chatElements || chatElements.length === 0) {
-                        console.warn("Bilibili 适配器: 找不到聊天元素 (尝试了 .danmaku-item, .chat-item)。聊天收集可能失败。");
-                        return newChats; // 找不到则返回空数组
-                    } else {
-                        // console.log("Bilibili 适配器: 使用备用选择器 '.chat-item' 获取聊天消息。");
-                    }
+            /**
+             * 从新添加的 Bilibili 聊天 DOM 节点提取数据
+             * @param {Node} node - 新添加到聊天容器的 DOM 节点
+             * @returns {{uname: string, content: string}|null}
+             */
+            extractRealtimeChatData: function (node) {
+                // 确保传入的是正确的元素节点
+                if (!node || node.nodeType !== Node.ELEMENT_NODE || !node.matches(this.chatMessageSelector)) {
+                    // console.warn('[Bilibili Adapter] extractRealtimeChatData: Invalid node received', node);
+                    return null;
                 }
 
-                // 将录制开始和结束时间戳从毫秒转换为秒
-                const startSec = Math.floor(recordingStartTimestamp / 1000);
-                const endSec = Math.floor(recordingEndTimestamp / 1000);
-                // 确保结束时间不早于开始时间（处理可能的边界情况）
-                const effectiveEndSec = Math.max(endSec, startSec);
+                // 尝试从 data-* 属性获取数据
+                const uname = node.dataset.uname;
+                const uid = node.dataset.uid;
 
-                // 【调试日志】打印请求的时间段（秒）
-                // console.log(`[聊天收集器 - Bilibili] 请求的时间段 (秒): ${startSec} - ${effectiveEndSec}`);
+                // 尝试从特定子元素获取内容，如果失败则回退到 data-danmaku
+                const contentElement = node.querySelector('.danmaku-item-right');
+                let content = contentElement ? contentElement.textContent?.trim() : null;
+                // 如果特定元素找不到内容，尝试从 data-danmaku 获取
+                if (content === null || content === '') {
+                    content = node.dataset.danmaku?.trim();
+                }
 
-                // 遍历找到的所有聊天元素
-                chatElements.forEach(chatElement => {
-                    let timestamp = null; // 初始化此聊天项的时间戳变量
-                    let timestampAttr = null; // 存储原始时间戳属性字符串，用于调试
-                    let isInTimeWindow = false; // 默认为不在时间窗口内
+                // 确保提取到了必要的信息
+                if (uname && (content || content === '')) { // 允许空内容
+                    // console.log(`[Bilibili Adapter] Extracted: uname=${uname}, uid=${uid}, content=${content}`);
+                    return {
+                        uname: uname,
+                        uid: uid || null, // 如果 uid 没取到，则为 null
+                        content: content || '' // 确保 content 不是 null
+                    };
+                } else {
+                    console.warn('[Bilibili Adapter] Failed to extract necessary data:', { uname, uid, content }, node);
+                    return null;
+                }
+            },
 
-                    try {
-                        // 尝试获取 data-ts 或 data-timestamp 属性
-                        timestampAttr = chatElement.getAttribute('data-ts') || chatElement.getAttribute('data-timestamp');
-
-                        if (timestampAttr) {
-                            // 解析时间戳字符串为整数
-                            const parsedTimestamp = parseInt(timestampAttr, 10);
-                            // 检查解析是否成功 (不是 NaN)
-                            if (!isNaN(parsedTimestamp)) {
-                                // 如果时间戳看起来像毫秒（非常大），则转换为秒，否则假定已经是秒
-                                timestamp = (parsedTimestamp > 1e12) ? Math.floor(parsedTimestamp / 1000) : parsedTimestamp;
-                                // 检查时间戳是否落在有效的录制时间窗口内
-                                isInTimeWindow = (timestamp >= startSec && timestamp <= effectiveEndSec);
-                            }
-                            // else: 解析为 NaN，timestamp 保持 null，isInTimeWindow 保持 false
-                        }
-                        // else: 元素上没有时间戳属性，timestamp 保持 null，isInTimeWindow 保持 false
-
-                        // 【调试日志】在决定是否跳过之前，记录每条消息的详细信息
-                        // const debugContent = (chatElement.querySelector('.danmaku-item-content') || chatElement).innerText?.slice(0, 50).trim();
-                        // console.log(`[Bili 聊天项] 原始 TS 属性: ${timestampAttr}, 解析秒: ${timestamp}, 在窗口内 (${startSec}-${effectiveEndSec})?: ${isInTimeWindow}, 内容: ${debugContent || 'N/A'}`);
-
-                        // 仅当消息在时间窗口内时才处理
-                        if (isInTimeWindow) {
-                            // 【调试日志】确认包含此消息
-                            // console.log(` -> 包含 (时间戳 ${timestamp} 在 ${startSec}-${effectiveEndSec} 之内)`);
-
-                            // --- 提取弹幕信息 ---
-                            const uid = chatElement.getAttribute('data-uid'); // 获取用户ID
-                            const uname = chatElement.getAttribute('data-uname'); // 获取用户名
-                            // 尝试多种选择器获取弹幕内容节点
-                            const contentNode = chatElement.querySelector('.danmaku-content')
-                                || chatElement.querySelector('.danmaku-item-content')
-                                || chatElement.querySelector('.danmaku-message')
-                                || chatElement; // 最后尝试整个元素
-                            // 获取并清理弹幕文本内容
-                            let content = contentNode ? contentNode.innerText.trim() : null;
-
-                            // B站有时会将用户名作为内容的前缀，尝试移除
-                            if (content && chatElement === contentNode && uname && content.startsWith(uname)) {
-                                content = content.substring(uname.length).replace(/^[:：\s]+/, '').trim();
-                            }
-                            // --- 提取结束 ---
-
-                            // 确保 uid, uname, content 都有效
-                            if (uid && uname && content) {
-                                // 将提取的信息添加到 newChats 数组
-                                newChats.push({
-                                    uname: uname,
-                                    content: content,
-                                    uid: uid,
-                                    platform: 'bilibili', // 标记来源平台
-                                    // 发送我们用于过滤的时间戳（秒）
-                                    timestamp: timestamp
-                                });
-                            } else {
-                                // 如果缺少关键数据，则发出警告（可选）
-                                // console.warn("Bilibili 适配器: 因缺少数据 (uid/uname/content) 跳过聊天项:", { uid, uname, content: content ? '存在' : '缺失', timestamp });
-                            }
-                        } else {
-                            // 【调试日志】说明跳过此消息的原因
-                            // console.log(` -> 跳过 (时间戳 ${timestamp} 在 ${startSec}-${effectiveEndSec} 之外或为 null/无效)`);
-                        }
-                    } catch (e) {
-                        // 捕获并报告处理单个聊天元素时发生的错误
-                        console.error("Bilibili 适配器: 处理聊天元素时出错:", e, chatElement);
+            // Bilibili 获取历史消息
+            extractInitialChatMessages: function () {
+                console.log("[Bilibili Adapter] extractInitialChatMessages not implemented yet.");
+                // 这里可以尝试选中 #chat-items 下的所有 .chat-item.danmaku-item
+                // 并为每个元素调用 extractRealtimeChatData，然后添加到 initialChatBuffer
+                // 但要注意处理顺序和去重
+                const initialMessages = [];
+                const messageNodes = document.querySelectorAll(`${this.chatContainerSelector} ${this.chatMessageSelector}`);
+                messageNodes.forEach(node => {
+                    const chatData = this.extractRealtimeChatData(node);
+                    if (chatData) {
+                        const timestamp = parseInt(node.dataset.ts || (Date.now() / 1000).toString(), 10) * 1000 || Date.now(); // 使用 data-ts 或当前时间
+                        initialMessages.push({
+                            ...chatData,
+                            platform: this.platformName,
+                            timestamp: timestamp // 尝试使用 B 站的时间戳
+                        });
                     }
-                }); // 结束遍历
-
-                // 【调试日志】打印最终收集到的相关聊天消息数量
-                // console.log(`Bilibili 适配器: 为该时间段收集了 ${newChats.length} 条相关聊天消息。`);
-                return newChats; // 返回收集到的聊天消息数组
+                });
+                // 可能需要排序 TBD
+                // 添加到初始缓冲区 (如果实现了 initialChatBuffer)
+                // initialChatBuffer.push(...initialMessages);
+                console.log(`[Bilibili Adapter] Found ${initialMessages.length} potential initial messages.`);
+                return initialMessages; // 返回提取到的消息数组
             },
 
             /**
@@ -246,6 +210,9 @@
 
         youtube: {
             platformName: "YouTube",
+            chatContainerSelector: '#items.yt-live-chat-item-list-renderer', // YouTube iframe 内的聊天列表容器
+            chatMessageSelector: 'yt-live-chat-text-message-renderer, yt-live-chat-paid-message-renderer, yt-live-chat-paid-sticker-renderer, yt-live-chat-membership-item-renderer', // YouTube 的各种聊天消息类型
+            
             isApplicable: () => window.location.hostname.includes('youtube.com') && window.location.pathname.startsWith('/watch'),
 
             /**
@@ -331,160 +298,84 @@
             },
 
             /**
-             * 从 DOM 中收集在最后录制间隔内的聊天消息。(YouTube)
-             * @param {number} recordingStartTimestamp - 录制开始时间戳 (ms)
-             * @param {number} recordingEndTimestamp - 录制结束时间戳 (ms)
-             * @returns {Array<object>} 聊天消息对象的数组
+             * 从新添加的 YouTube 聊天 DOM 节点提取数据
+             * @param {Node} node - 新添加到聊天容器的 DOM 节点
+             * @returns {{uname: string, content: string}|null}
              */
-            collectChatMessages: (recordingStartTimestamp, recordingEndTimestamp) => {
-                const newChats = [];
-                const startSecYt = Math.floor(recordingStartTimestamp / 1000); // 仍然计算秒级，可能用于输出
-                const endSecYt = Math.floor(recordingEndTimestamp / 1000);
-                const effectiveEndSecYt = Math.max(endSecYt, startSecYt);
+            extractRealtimeChatData: (node) => {
+                if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+                // YouTube消息本身就是指定选择器的元素，无需额外检查 node.matches
 
-                const iframe = document.querySelector('iframe#chatframe');
-                if (!iframe) { console.warn("YouTube 适配器: 未找到聊天 iframe (#chatframe)。"); return newChats; }
-                const chatDoc = iframe.contentDocument || iframe.contentWindow?.document;
-                if (!chatDoc) { console.warn("YouTube 适配器: 无法访问聊天 iframe 文档。"); return newChats; }
-
-                // --- 1. 生成允许的时间字符串集合 ---
-                const allowedVisibleTimestamps = new Set();
                 try {
-                    const startDate = new Date(recordingStartTimestamp);
-                    const endDate = new Date(recordingEndTimestamp);
+                    const authorName = node.querySelector('#author-name')?.textContent.trim() || '未知';
+                    let message = '';
 
-                    // 将开始时间调回到该分钟的开始 (0 秒, 0 毫秒)
-                    let currentMinuteDate = new Date(startDate);
-                    currentMinuteDate.setSeconds(0, 0);
-
-                    // 获取结束时间对应的分钟的开始时间戳，用于循环比较
-                    let endMinuteStartTimestamp = new Date(endDate);
-                    endMinuteStartTimestamp.setSeconds(0, 0);
-                    endMinuteStartTimestamp = endMinuteStartTimestamp.getTime();
-
-                    // 循环生成从开始分钟到结束分钟的所有时间字符串
-                    let iterations = 0; // 防止无限循环
-                    const maxIterations = 1440; // 一天最多1440分钟
-
-                    while (currentMinuteDate.getTime() <= endMinuteStartTimestamp && iterations < maxIterations) {
-                        // 格式化时间，需要精确匹配 YouTube 的格式，注意 AM/PM 和可能存在的特殊空格
-                        // 'en-US' 通常能得到 AM/PM 格式。 'narrowSymbol' (U+202F) 可能需要手动处理或正则替换
-                        const options = { hour: 'numeric', minute: '2-digit', hour12: true };
-                        let visibleStr = currentMinuteDate.toLocaleTimeString('en-US', options);
-                        // 尝试标准化：去除多余空格并将 PM/AM 转为大写 (如果需要)
-                        visibleStr = visibleStr.replace(/\s+/g, ' ').replace(/ (AM|PM)$/i, (match, p1) => ' ' + p1.toUpperCase());
-                        // 特殊处理一下你例子中的特殊空格 U+202F (NARROW NO-BREAK SPACE)
-                        visibleStr = visibleStr.replace(/[\u202F]/g, ' '); // 将特殊空格替换为普通空格
-                        visibleStr = visibleStr.trim(); // 最后清理
-
-                        allowedVisibleTimestamps.add(visibleStr);
-
-                        // 前进一分钟
-                        currentMinuteDate.setMinutes(currentMinuteDate.getMinutes() + 1);
-                        iterations++;
+                    // 根据不同的消息类型提取内容 (复用旧的 collectChatMessages 逻辑片段)
+                    if (node.matches('yt-live-chat-text-message-renderer')) {
+                        const messageSpan = node.querySelector('#message');
+                        if (messageSpan) {
+                            message = Array.from(messageSpan.childNodes).map(child => {
+                                if (child.nodeType === Node.TEXT_NODE) { return child.textContent.trim(); }
+                                if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'IMG') {
+                                    const alt = child.getAttribute('alt')?.trim() ?? '表情'; return `[${alt}]`;
+                                } return '';
+                            }).join(' ').replace(/\s+/g, ' ').trim();
+                        }
+                    } else if (node.matches('yt-live-chat-paid-message-renderer')) {
+                        const price = node.querySelector('#purchase-amount')?.textContent.trim() || '';
+                        const paidMsg = node.querySelector('#message')?.innerText.trim() || '(无留言)';
+                        message = `[SuperChat ${price}] ${paidMsg}`;
+                    } else if (node.matches('yt-live-chat-paid-sticker-renderer')) {
+                        const price = node.querySelector('#purchase-amount')?.textContent.trim() || '';
+                        message = `[SuperSticker ${price}] [发送了超级贴图]`;
+                    } else if (node.matches('yt-live-chat-membership-item-renderer')) {
+                        const giftText = node.innerText.trim();
+                        message = `[会员消息] ${giftText}`;
+                    } else {
+                        return null; // 未知类型的节点
                     }
-                    if (iterations >= maxIterations) {
-                        console.warn("YouTube 时间戳生成循环次数过多，可能存在问题。");
-                    }
-                    // console.log("[YT 计算] 允许的可见时间戳:", allowedVisibleTimestamps);
 
+                    if (authorName && message) {
+                        return { uname: authorName, content: message };
+                    }
+                } catch (e) {
+                    console.error("[YT Adapter] 提取实时聊天数据时出错:", e, node);
+                }
+                return null;
+            },
+
+            /**
+            *  获取 YouTube 聊天容器的 DOM 节点 (处理 iframe)
+            *  @returns {Node|null} 聊天容器节点或 null
+            */
+            getChatContainerNode: function () {
+                try {
+                    const iframe = document.querySelector('iframe#chatframe');
+                    if (!iframe) {
+                        // console.warn("YouTube Adapter: Chat iframe (#chatframe) not found for observer setup.");
+                        return null;
+                    }
+                    // 确保能访问 contentDocument，否则等待下一轮重试
+                    const chatDoc = iframe.contentDocument; // || iframe.contentWindow?.document; // 通常 contentDocument 就够了，且跨域策略更友好
+                    if (!chatDoc) {
+                        // console.warn("YouTube Adapter: Cannot access chat iframe document yet for observer setup.");
+                        return null;
+                    }
+                    // 在 iframe 内部查找
+                    const container = chatDoc.querySelector(this.chatContainerSelector);
+                    // if (!container) {
+                    //    console.warn(`YT Adapter: Chat container '${this.chatContainerSelector}' not found inside iframe.`);
+                    // }
+                    return container;
                 } catch (err) {
-                    console.error("[YT 错误] 生成允许的时间戳集合时出错:", err);
-                    // 如果出错，则不进行过滤，收集所有消息（或返回空，取决于策略）
-                    // 为了安全起见，这里返回空，避免发送错误数据
-                    return newChats;
-                }
-
-                // 如果集合为空（可能开始结束时间相同且正好在分钟边界），至少加入开始时间对应的那个
-                if (allowedVisibleTimestamps.size === 0) {
-                    try {
-                        const startDate = new Date(recordingStartTimestamp);
-                        const options = { hour: 'numeric', minute: '2-digit', hour12: true };
-                        let visibleStr = startDate.toLocaleTimeString('en-US', options);
-                        visibleStr = visibleStr.replace(/\s+/g, ' ').replace(/ (AM|PM)$/i, (match, p1) => ' ' + p1.toUpperCase());
-                        visibleStr = visibleStr.replace(/[\u202F]/g, ' ');
-                        visibleStr = visibleStr.trim();
-                        allowedVisibleTimestamps.add(visibleStr);
-                        // console.log("[YT 计算] 集合为空，添加开始时间戳:", allowedVisibleTimestamps);
-                    } catch (e) { /* Failsafe */ }
-                }
-
-                const chatItems = chatDoc.querySelectorAll(
-                    'yt-live-chat-text-message-renderer, ' +
-                    'yt-live-chat-paid-message-renderer, ' +
-                    'yt-live-chat-paid-sticker-renderer, ' +
-                    'yt-live-chat-membership-item-renderer'
-                );
-
-                chatItems.forEach((el, index) => {
-                    let isAllowed = false;
-                    let messageVisibleStr = '';
-                    try {
-                        // --- 2. 获取消息的可见时间戳 ---
-                        const timestampSpan = el.querySelector('#timestamp');
-                        if (timestampSpan) {
-                            messageVisibleStr = timestampSpan.textContent.trim();
-                            // 标准化处理，使其与我们生成的格式一致
-                            messageVisibleStr = messageVisibleStr.replace(/\s+/g, ' '); // 替换各种空白为普通空格
-                            messageVisibleStr = messageVisibleStr.replace(/[\u202F]/g, ' '); // 处理特殊空格 U+202F
-                            messageVisibleStr = messageVisibleStr.replace(/ (AM|PM)$/i, (match, p1) => ' ' + p1.toUpperCase());
-                            messageVisibleStr = messageVisibleStr.trim(); // 最后清理
-
-                            // --- 3. 检查时间戳是否在允许的集合中 ---
-                            isAllowed = allowedVisibleTimestamps.has(messageVisibleStr);
-                            // console.log(`[YT 聊天项 #${index}] 可见时间: "${messageVisibleStr}", 在允许集合 (${[...allowedVisibleTimestamps].join(',')}) 中?: ${isAllowed}`);
-                        } else {
-                            // console.log(`[YT 聊天项 #${index}] 找不到可见时间戳 span#timestamp`);
-                        }
-
-                        if (isAllowed) {
-                            // console.log(`          -> 包含此消息 (基于可见时间)`);
-                            const authorName = el.querySelector('#author-name')?.textContent.trim() || '未知';
-                            let message = '';
-                            // ... (提取 message 的逻辑不变，和之前的版本一样) ...
-                            if (el.matches('yt-live-chat-text-message-renderer')) {
-                                const messageSpan = el.querySelector('#message');
-                                if (messageSpan) {
-                                    message = Array.from(messageSpan.childNodes).map(node => {
-                                        if (node.nodeType === Node.TEXT_NODE) { return node.textContent.trim(); }
-                                        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG') {
-                                            const alt = node.getAttribute('alt')?.trim() ?? '表情'; return `[${alt}]`;
-                                        } return '';
-                                    }).join(' ').replace(/\s+/g, ' ').trim();
-                                }
-                            } else if (el.matches('yt-live-chat-paid-message-renderer')) {
-                                const price = el.querySelector('#purchase-amount')?.textContent.trim() || '';
-                                const paidMsg = el.querySelector('#message')?.innerText.trim() || '(无留言)';
-                                message = `[SuperChat ${price}] ${paidMsg}`;
-                            } else if (el.matches('yt-live-chat-paid-sticker-renderer')) {
-                                const price = el.querySelector('#purchase-amount')?.textContent.trim() || '';
-                                message = `[SuperSticker ${price}] [发送了超级贴图]`;
-                            } else if (el.matches('yt-live-chat-membership-item-renderer')) {
-                                const giftText = el.innerText.trim();
-                                message = `[会员消息] ${giftText}`;
-                            } else {
-                                return; // 跳过未知类型
-                            }
-
-                            if (authorName && message) {
-                                newChats.push({
-                                    uname: authorName,
-                                    content: message,
-                                    platform: 'youtube',
-                                    // --- 4. 输出时间戳：使用粗略的开始秒数作为占位符 ---
-                                    timestamp: startSecYt
-                                });
-                            }
-                        } else {
-                            // console.log(`          -> 跳过 (可见时间 "${messageVisibleStr}" 不在允许集合中)`);
-                        }
-                    } catch (err) {
-                        console.error(`[YT 聊天项 #${index}] 处理出错:`, err, el);
+                    // 捕获可能的跨域错误等
+                    if (err.name === 'SecurityError') {
+                        console.warn("YouTube Adapter: SecurityError accessing chat iframe content. Waiting for permissions or load.");
+                    } else {
+                        console.error("YouTube Adapter: Error finding chat container node:", err);
                     }
-                }); // 结束遍历
-
-                // console.log(`[YT 结果] 本次使用可见时间戳收集到 ${newChats.length} 条相关聊天消息。`);
-                return newChats;
+                    return null;
+                }
             },
 
             /**
@@ -568,6 +459,8 @@
         },
         twitch: {
             platformName: "Twitch",
+            chatContainerSelector: '.chat-scrollable-area__message-container', // Twitch 的聊天消息容器
+            chatMessageSelector: '.chat-line__message', // Twitch 的单条聊天消息
 
             /**
              * 判斷當前頁面是否為 Twitch 直播頁。
@@ -602,87 +495,52 @@
             },
 
             /**
-             * 收集在錄音起止時間範圍內的 Twitch 聊天消息。
-             * @param {number} recordingStartTimestamp - 錄製開始時間戳 (ms)
-             * @param {number} recordingEndTimestamp - 錄製結束時間戳 (ms)
-             * @returns {Array<object>} 聊天消息列表
+             * 获取 Twitch 聊天容器的 DOM 节点
+             * @returns {Node|null} 聊天容器节点或 null
              */
-            collectChatMessages: (recordingStartTimestamp, recordingEndTimestamp) => {
-                const newChats = [];
-                const chatElements = document.querySelectorAll('.chat-line__message');
+            getChatContainerNode: function () {
+                return document.querySelector(this.chatContainerSelector);
+            },
 
-                console.log(`[Twitch Adapter] 找到聊天元素数量: ${chatElements.length}`);
-
-                if (!chatElements || chatElements.length === 0) {
-                    console.warn("[Twitch Adapter] 未找到聊天訊息元素 .chat-line__message。");
-                    return newChats;
+            /**
+             * 从新添加的 Twitch 聊天 DOM 节点提取数据
+             * @param {Node} node - 新添加到聊天容器的 DOM 节点
+             * @returns {{uname: string, content: string}|null}
+             */
+            extractRealtimeChatData: (node) => {
+                if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+                // 检查节点是否匹配我们的消息选择器
+                if (!node.matches(platformAdapters.twitch.chatMessageSelector)) {
+                    return null;
                 }
 
-                const startDate = new Date(recordingStartTimestamp);
-                const endDate = new Date(recordingEndTimestamp);
-                const allowedVisibleTimestamps = new Set();
-
-                console.log(`[Twitch Adapter] 錄音開始: ${startDate.toISOString()}，結束: ${endDate.toISOString()}`);
-
-                // 生成從開始到結束分鐘的可見時間字符串集合
                 try {
-                    let currentMinuteDate = new Date(startDate);
-                    currentMinuteDate.setSeconds(0, 0);
-
-                    const endMinuteStartTimestamp = new Date(endDate);
-                    endMinuteStartTimestamp.setSeconds(0, 0);
-
-                    let iterations = 0;
-                    const maxIterations = 1440; // 24小時上限
-                    while (currentMinuteDate.getTime() <= endMinuteStartTimestamp.getTime() && iterations < maxIterations) {
-                        const hh = currentMinuteDate.getHours().toString().padStart(2, '0');
-                        const mm = currentMinuteDate.getMinutes().toString().padStart(2, '0');
-                        allowedVisibleTimestamps.add(`${hh}:${mm}`);
-                        currentMinuteDate.setMinutes(currentMinuteDate.getMinutes() + 1);
-                        iterations++;
-                    }
-                    console.log(`[Twitch Adapter] 允許的時間戳範圍集合:`, [...allowedVisibleTimestamps]);
-                } catch (err) {
-                    console.error("[Twitch Adapter] 生成允許時間集合時出錯:", err);
-                    return newChats;
-                }
-
-                chatElements.forEach((chatEl, idx) => {
-                    try {
-                        const timestampSpan = chatEl.querySelector('.chat-line__timestamp');
-                        const usernameSpan = chatEl.querySelector('.chat-author__display-name');
-                        const messageSpan = chatEl.querySelector('span[data-a-target="chat-message-text"]');
-
-                        if (timestampSpan && usernameSpan && messageSpan) {
-                            const visibleTime = timestampSpan.textContent.trim(); // 例如 '19:44'
-                            console.log(`[Twitch Adapter] 第${idx + 1}個訊息: timestamp=${visibleTime}`);
-
-                            if (allowedVisibleTimestamps.has(visibleTime)) {
-                                const uname = usernameSpan.textContent.trim();
-                                const content = messageSpan.textContent.trim();
-                                console.log(`[Twitch Adapter] => 命中時間範圍，收集 uname=${uname}, content=${content}`);
-
-                                if (uname && content) {
-                                    newChats.push({
-                                        uname: uname,
-                                        content: content,
-                                        platform: 'twitch',
-                                        timestamp: Math.floor(recordingStartTimestamp / 1000) // 錄音開始秒數
-                                    });
-                                }
-                            } else {
-                                console.log(`[Twitch Adapter] => 時間不符合，跳過`);
+                    // 注意：Twitch 可能有嵌套结构，选择器需精确
+                    const usernameSpan = node.querySelector('.chat-author__display-name');
+                    // 提取消息内容，考虑文本和表情图片
+                    const messageBody = node.querySelector('span[data-a-target="chat-message-text"]');
+                    let content = '';
+                    if (messageBody) {
+                        content = Array.from(messageBody.childNodes).map(child => {
+                            if (child.nodeType === Node.TEXT_NODE) {
+                                return child.textContent; // 保留原始空格，后面统一 trim
+                            } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'IMG') {
+                                // 对于表情图片，提取 alt 文本或 src (如果需要区分)
+                                return child.getAttribute('alt') || '[表情]';
                             }
-                        } else {
-                            console.warn(`[Twitch Adapter] 第${idx + 1}個訊息：缺少必要元素 timestamp/user/message`, chatEl);
-                        }
-                    } catch (e) {
-                        console.error("[Twitch Adapter] 收集聊天時出錯:", e, chatEl);
+                            return ''; // 忽略其他类型的节点，如 <span> 包裹的徽章等
+                        }).join('').trim(); // 合并并去除首尾空格
                     }
-                });
 
-                console.log(`[Twitch Adapter] 最終收集到 ${newChats.length} 條聊天消息`);
-                return newChats;
+                    const uname = usernameSpan ? usernameSpan.textContent.trim() : null;
+
+                    if (uname && content) {
+                        return { uname, content };
+                    }
+                } catch (e) {
+                    console.error("[Twitch Adapter] 提取实时聊天数据时出错:", e, node);
+                }
+                return null;
             },
 
             /**
@@ -818,6 +676,8 @@
 
     let recordingStartTimestamp = 0; // 当前录制块开始的时间戳
     let recordingEndTimestamp = 0; // 当前录制块结束的时间戳
+    let realtimeChatBuffer = []; // 实时聊天消息缓冲区 { uname, content, platform, timestamp (精确ms) }
+    let chatObserver = null; // 聊天区域的 MutationObserver 实例
 
     let chatQueue = []; // 用于存放待发送弹幕消息的队列
 
@@ -930,7 +790,6 @@
         // --- 1. 注入样式 ---
         const style = document.createElement('style');
         style.textContent = `
-    /* --- UI 面板样式 (省略，与之前相同) --- */
     /* --- UI 面板样式 --- */
     .auto-chat-ai-panel {
         position: fixed;
@@ -1206,10 +1065,10 @@
 
         // -- 添加控件 --
         // 主控制开关
-        contentDiv.appendChild(createSwitchControl('main-switch', 'Control')); // 使用中文标签
+        contentDiv.appendChild(createSwitchControl('main-switch', 'Control'));
 
         // 聊天权限开关
-        contentDiv.appendChild(createSwitchControl('chat-permission', 'Chat Permission')); // 使用中文标签
+        contentDiv.appendChild(createSwitchControl('chat-permission', 'Chat Permission'));
 
         // 静音开关 (带 Tooltip)
         const muteItemDiv = document.createElement('div');
@@ -1385,6 +1244,187 @@
     } // createControlPanel 函数结束
 
     /**
+     * @function startChatObserver
+     * @description 初始化并启动 MutationObserver 来实时监视新的聊天消息。
+     * 这是在那些动态将新消息添加到 DOM 的平台上捕获聊天的主要方法。
+     * 它能处理消息节点被直接添加或被包裹在其他元素内的情况。
+     */
+    function startChatObserver() {
+        // 如果观察器实例已存在，则表示已经在运行，直接返回
+        if (chatObserver) {
+            console.log("AI Agent: 聊天 MutationObserver 已在运行。");
+            return;
+        }
+        // 检查当前平台适配器是否正确加载并配置了必要的选择器
+        if (!currentPlatformAdapter || !currentPlatformAdapter.getChatContainerNode || !currentPlatformAdapter.chatMessageSelector) {
+            console.error("AI Agent: 当前平台适配器未正确配置 (缺少 getChatContainerNode 或 chatMessageSelector)，无法启动聊天观察器。");
+            return;
+        }
+
+        // 使用适配器的方法来获取目标节点
+        const targetNode = currentPlatformAdapter.getChatContainerNode();
+
+        if (!targetNode) {
+            // 日志可以保持不变，适配器内部可能已经输出了更具体的警告
+            console.warn(`AI Agent: 未找到聊天容器 (via adapter for ${currentPlatformAdapter.platformName}). 将在 1 秒后重试...`);
+            setTimeout(startChatObserver, 1000);
+            return;
+        }
+
+        // 如果没有找到目标容器节点 (可能页面还未完全加载)
+        if (!targetNode) {
+            console.warn(`AI Agent: 未找到聊天容器 (${currentPlatformAdapter.chatContainerSelector})。将在 1 秒后重试...`);
+            // 设置一个短暂的延时后重试启动过程
+            setTimeout(startChatObserver, 1000);
+            return;
+        }
+
+        // 找到容器，准备启动观察器
+        console.log(`AI Agent: 找到聊天容器，准备启动 Observer:`, targetNode);
+
+        // 定义当观察到 DOM 变动时执行的回调函数
+        const observerCallback = (mutationsList) => {
+            // 遍历所有发生的变动记录
+            for (const mutation of mutationsList) {
+                // 我们只关心子节点列表的变化 (childList)，并且确实有节点被添加 (addedNodes)
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    // 遍历所有被添加的节点
+                    mutation.addedNodes.forEach(node => {
+                        // 确保我们处理的是 HTML 元素节点 (类型为 1)，忽略文本节点等
+                        if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+                        let messageNode = null; // 用于存储最终找到的消息节点
+
+                        // 检查 1：被添加的节点本身是否就是我们要找的聊天消息元素？
+                        // 使用平台适配器中定义的 chatMessageSelector 进行匹配
+                        if (node.matches(currentPlatformAdapter.chatMessageSelector)) {
+                            messageNode = node; // 如果是，直接使用这个节点
+                            // console.log('[调试 Observer] 添加的节点本身就是消息节点:', messageNode);
+                        }
+                        // 检查 2：如果不是，那么这个被添加的节点内部是否包含了我们要找的聊天消息元素？
+                        // (这处理了消息被一个额外的 div 包裹后再添加到容器的情况)
+                        // 首先确保该节点支持 querySelector 方法 (某些节点如 <title> 可能不支持)
+                        else if (typeof node.querySelector === 'function') {
+                            // 在被添加节点的内部查找匹配 chatMessageSelector 的元素
+                            const potentialMessageNode = node.querySelector(currentPlatformAdapter.chatMessageSelector);
+                            if (potentialMessageNode) {
+                                messageNode = potentialMessageNode; // 如果找到了，使用这个内部节点
+                                // console.log('[调试 Observer] 在添加的节点内部找到了消息节点:', messageNode);
+                            }
+                        }
+
+                        // 如果通过以上两种方式之一，成功找到了消息节点 (messageNode 不为 null)
+                        if (messageNode) {
+                            try {
+                                // 调用当前平台适配器的 extractRealtimeChatData 方法来提取用户名和内容
+                                const chatData = currentPlatformAdapter.extractRealtimeChatData(messageNode);
+
+                                // 确保提取到了有效的数据 (用户名存在，内容存在或为空字符串)
+                                if (chatData && chatData.uname && (chatData.content || chatData.content === '')) {
+                                    const timestamp = Date.now(); // 获取当前时间戳
+                                    // 构建新的聊天消息对象
+                                    const newChat = {
+                                        ...chatData, // 包含提取的 uname, content, 可能还有 uid
+                                        platform: currentPlatformAdapter.platformName, // 记录平台名称
+                                        timestamp: timestamp, // 记录时间戳
+                                        // 如果适配器没有提供 uid，尝试用用户名生成哈希作为备用标识符
+                                        uid: chatData.uid || generateHash(chatData.uname) || null // 确保有某种唯一标识，即使是临时的
+                                    };
+
+                                    // --- 防止重复消息逻辑 开始 ---
+                                    const timeWindow = 5000; // 定义一个时间窗口（毫秒），用于检查近期重复消息，例如 5 秒
+                                    const bufferToCheck = realtimeChatBuffer.slice(-20); // 只检查实时缓冲区中最近的 20 条消息，以优化性能
+                                    // 检查是否存在满足以下条件的已有消息：时间戳接近、用户名相同、内容相同、平台相同
+                                    const isDuplicate = bufferToCheck.some(existingChat =>
+                                        existingChat.timestamp >= timestamp - timeWindow && // 时间接近
+                                        existingChat.uname === newChat.uname &&             // 用户名相同
+                                        existingChat.content === newChat.content &&       // 内容相同
+                                        existingChat.platform === newChat.platform          // 平台相同
+                                        // 如果有可靠的 uid，可以用 existingChat.uid === newChat.uid 进行更精确的判断
+                                    );
+
+                                    // 如果不是重复消息
+                                    if (!isDuplicate) {
+                                        // 将新的聊天消息添加到实时缓冲区
+                                        realtimeChatBuffer.push(newChat);
+                                        console.log(`[聊天捕获] ${new Date(timestamp).toLocaleTimeString()} | ${newChat.uname}: ${newChat.content.substring(0, 50)}...`);
+                                    } else {
+                                        // 如果是重复消息，可以选择性地记录日志
+                                        console.log(`[聊天捕获] 检测到重复消息并跳过:`, newChat.uname, newChat.content.substring(0, 30));
+                                    }
+                                    // --- 防止重复消息逻辑 结束 ---
+
+                                } else {
+                                    // 如果提取函数返回 null 或无效数据，记录警告
+                                    // console.warn('[调试 Observer] 提取到的聊天数据为 null 或无效:', messageNode, chatData);
+                                }
+                            } catch (extractError) {
+                                // 如果在调用 extractRealtimeChatData 时发生错误，捕获并记录
+                                console.error('[Observer] 调用 extractRealtimeChatData 时出错:', extractError, messageNode);
+                            }
+                        }
+                        // else {
+                        //    // 如果需要调试所有被添加但未被识别为消息或不包含消息的节点，可以取消下面的注释
+                        //    // console.log('[调试 Observer] 添加的节点不是消息节点，也不包含消息节点:', node);
+                        // }
+                    });
+
+                    // 限制实时聊天缓冲区的最大长度，防止内存无限增长
+                    const MAX_BUFFER_SIZE = 500; // 示例值：最多保留 500 条
+                    if (realtimeChatBuffer.length > MAX_BUFFER_SIZE) {
+                        // 如果超出限制，从缓冲区开头删除多余的旧消息
+                        realtimeChatBuffer.splice(0, realtimeChatBuffer.length - MAX_BUFFER_SIZE);
+                        // console.log(`[Observer] 实时聊天缓冲区已清理，保留最新的 ${MAX_BUFFER_SIZE} 条消息。`);
+                    }
+                }
+            }
+        };
+
+        // 创建 MutationObserver 的实例，并将上面定义的回调函数传递给它
+        chatObserver = new MutationObserver(observerCallback);
+
+        // 配置观察器的选项
+        const config = {
+            childList: true, // 观察目标节点的子节点（包括文本节点）的添加和删除
+            subtree: false   // 不观察目标节点所有后代节点的变动。
+            // 设置为 false 通常性能更好，且足以捕获直接添加到聊天容器的元素（或其包装器）。
+            // 如果遇到消息嵌套层级非常深且此设置无效的情况，可以尝试改为 true，但需注意可能的性能影响。
+        };
+
+        try {
+            // 使用指定的配置，在找到的聊天容器节点 (targetNode) 上启动观察器
+            chatObserver.observe(targetNode, config);
+            // 打印成功启动的日志，包含观察模式（直接子节点或整个子树）
+            console.log(`%cAI Agent: 聊天 MutationObserver 已在节点上成功启动 (模式: ${config.subtree ? '子树监听' : '直接子节点监听'})。`, "color: green; font-weight: bold;", targetNode);
+
+            // 可选：如果适配器实现了 extractInitialChatMessages 方法，可以在启动时尝试获取页面上已有的最后几条消息
+            // 这有助于 AI 在刚启动时就能获得一些上下文
+            // if (typeof currentPlatformAdapter.extractInitialChatMessages === 'function') {
+            //     currentPlatformAdapter.extractInitialChatMessages();
+            // }
+
+        } catch (e) {
+            // 如果启动观察器时发生错误 (例如，目标节点无效或配置错误)
+            console.error("AI Agent: 启动聊天 MutationObserver 失败:", e);
+            chatObserver = null; // 将观察器实例重置为 null，表示启动失败
+        }
+    }
+
+    /**
+    * 停止聊天 MutationObserver。
+    */
+    function stopChatObserver() {
+        if (chatObserver) {
+            chatObserver.disconnect();
+            chatObserver = null;
+            console.log("AI Agent: 聊天 MutationObserver 已停止。");
+            // 清空缓冲区确保下次启动是干净的
+            realtimeChatBuffer = [];
+            console.log("AI Agent: 实时聊天缓冲区已清空。");
+        }
+    }
+
+    /**
      * 启动 AI 代理的核心逻辑。
      */
     function startAgent() {
@@ -1412,6 +1452,7 @@
         if (initializeAudio()) { // 初始化音频成功
             isAgentRunning = true; // 设置代理运行状态标志
             startRecordingCycle(); // 开始录制循环
+            startChatObserver();   // 启动聊天监听器
             // 更新按钮状态
             runButton.textContent = 'Stop'; // 中文
             runButton.classList.add('running');
@@ -1440,6 +1481,7 @@
         isAgentRunning = false; // 清除代理运行状态标志 *先于* 停止录制器
 
         stopRecordingAndProcessing(); // 停止录制和处理流程
+        stopChatObserver(); // 停止chat监听器
 
         // 更新按钮状态
         runButton.textContent = 'Start'; // 中文
@@ -1451,8 +1493,8 @@
     }
 
     /**
- * 设置 MutationObserver 以检测视频元素何时添加到 DOM 中。
- */
+    * 设置 MutationObserver 以检测视频元素何时添加到 DOM 中。
+    */
     function observeVideoElement() {
         const targetNode = document.body;
         const config = { childList: true, subtree: true };
@@ -1709,9 +1751,9 @@
                     console.warn(`${label}: Blob size is very small (${audioBlob.size} bytes), skipping send.`);
                 } else {
                     // 使用适配器收集聊天消息
-                    const chats = currentPlatformAdapter.collectChatMessages(recordingStartTimestamp, recordingEndTimestamp);
+                    // const chats = currentPlatformAdapter.collectChatMessages(recordingStartTimestamp, recordingEndTimestamp);
                     const screenshotBlob = await captureScreenshot(); // 捕获屏幕截图 (uses adapter's findVideoElement)
-                    sendDataToServer(audioBlob, chats, screenshotBlob); // 发送数据
+                    sendDataToServer(audioBlob, recordingStartTimestamp, recordingEndTimestamp, screenshotBlob); // 发送数据
                 }
                 chunks.length = 0; // 清空块数组
             } else {
@@ -2010,22 +2052,38 @@
     }
 
     /**
-     * 将音频、弹幕消息和截图发送到后端 API。
-     * 处理累积逻辑。
-     * @param {Blob|null} audioBlob - 录制的音频数据 (可以是 null).
-     * @param {Array<object>} chats - 收集到的弹幕消息对象数组。
-     * @param {Blob|null} screenshotBlob - 捕获的屏幕截图 blob，或 null。
-     */
-    function sendDataToServer(audioBlob, chats, screenshotBlob) {
-        // Ensure we have *something* to send
-        if ((!audioBlob || audioBlob.size === 0) && chats.length === 0 && !screenshotBlob) {
-            console.log("No valid data (audio, chat, or screenshot) to send.");
-            return;
+    * 将音频、过滤后的实时弹幕和截图发送到后端 API。
+    * 处理累积逻辑。发送后清理过时的实时弹幕缓冲区。
+    * @param { Blob | null } audioBlob - 录制的音频数据(可以是 null).
+    * @param { number } currentRecordingStartTimestamp - * 刚结束 * 的录制块的开始时间戳(ms)
+    * @param { number } currentRecordingEndTimestamp - * 刚结束 * 的录制块的结束时间戳(ms)
+    * @param { Blob | null } screenshotBlob - 捕获的屏幕截图 blob，或 null。
+    */
+    function sendDataToServer(audioBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, screenshotBlob) {
+
+        // --- 1. 从实时缓冲区过滤当前时间段的聊天记录 ---
+        const chatsForThisInterval = realtimeChatBuffer.filter(chat =>
+            chat.timestamp >= currentRecordingStartTimestamp && chat.timestamp < currentRecordingEndTimestamp
+        );
+        console.log(`[Send Data] 从实时缓冲区过滤到 ${chatsForThisInterval.length} 条聊天消息 (时间范围: ${currentRecordingStartTimestamp} - ${currentRecordingEndTimestamp})`);
+
+        // --- 2. 清理实时缓冲区 (移除比当前结束时间更早的消息) ---
+        // 注意: 使用 `>=` 是为了保留恰好在结束瞬间或之后到达的消息给下一个周期
+        const originalBufferSize = realtimeChatBuffer.length;
+        realtimeChatBuffer = realtimeChatBuffer.filter(chat => chat.timestamp >= currentRecordingEndTimestamp);
+        if (realtimeChatBuffer.length < originalBufferSize) {
+            console.log(`[Send Data] 实时聊天缓冲区已清理，移除 ${originalBufferSize - realtimeChatBuffer.length} 条旧消息。`);
         }
 
-        // 处理累积逻辑 (只累积音频)
+        // --- 3. 检查是否有有效数据发送 ---
+        if ((!audioBlob || audioBlob.size === 0) && chatsForThisInterval.length === 0 && !screenshotBlob) {
+            console.log("[Send Data] 没有有效数据（音频、过滤后的聊天、截图）需要发送。");
+            return; // 没有可发送的数据，直接返回
+        }
+
+        // --- 4. 处理音频累积逻辑 (与之前类似，但针对 audioBlob) ---
         if (isSending) {
-            console.log('Previous request in progress. Accumulating audio chunk (if present)...');
+            console.log('[Send Data] 上一个请求正在进行中。累积音频块 (如果存在)...');
             if (audioBlob && audioBlob.size > 0) {
                 if (!isAccumulating) {
                     accumulatedChunks = [audioBlob]; // 开始新的累积
@@ -2034,79 +2092,72 @@
                     accumulatedChunks.push(audioBlob); // 添加到现有累积中
                 }
             }
-            // 简单起见，不累积弹幕和截图 for now
+            // 聊天记录已基于时间过滤，截图通常不需要累积
             return;
         }
 
-        // 合并累积的块
+        // 合并累积的音频块
         let finalAudioBlob = audioBlob;
         if (isAccumulating && accumulatedChunks.length > 0) {
-            console.log(`Merging ${accumulatedChunks.length} accumulated audio chunks with the current one (if any).`);
-            // If current audioBlob exists, add it to the front before merging
+            console.log(`[Send Data] 合并 ${accumulatedChunks.length} 个累积的音频块与当前块 (如果有)。`);
             const chunksToMerge = audioBlob ? [audioBlob, ...accumulatedChunks] : [...accumulatedChunks];
             if (chunksToMerge.length > 0) {
-                finalAudioBlob = new Blob(chunksToMerge, { type: chunksToMerge[0].type }); // Use type of first chunk
-                console.log(`Merged audio blob size: ${finalAudioBlob.size} bytes`);
+                finalAudioBlob = new Blob(chunksToMerge, { type: chunksToMerge[0].type });
+                console.log(`[Send Data] 合并后的音频 Blob 大小: ${finalAudioBlob.size} bytes`);
             } else {
-                finalAudioBlob = null; // No audio after all
+                finalAudioBlob = null;
             }
-            accumulatedChunks = []; // Clear accumulated
+            accumulatedChunks = [];
             isAccumulating = false;
         }
 
-        // --- 准备并发送数据 ---
+        // --- 5. 准备并发送数据 ---
         isSending = true; // 设置发送锁
         const dataSize = finalAudioBlob ? finalAudioBlob.size : 0;
         const screenshotSize = screenshotBlob ? screenshotBlob.size : 0;
-        console.log(`Preparing to send data. Audio: ${dataSize} bytes, Chats: ${chats.length}, Screenshot: ${screenshotSize} bytes.`);
+        console.log(`[Send Data] 准备发送数据。音频: ${dataSize} bytes, 聊天: ${chatsForThisInterval.length}, 截图: ${screenshotSize} bytes.`);
 
         const formData = new FormData();
-        // Append data only if it exists and is valid
         if (finalAudioBlob && finalAudioBlob.size > 0) {
             formData.append('audio', finalAudioBlob, `audio_${Date.now()}.webm`);
         }
-        // Append chats even if empty, backend might expect the field
-        formData.append('chats', JSON.stringify(chats));
-        formData.append('roomId', roomId || 'unknown'); // Send ID or fallback
-        formData.append('platform', currentPlatformAdapter.platformName); // Send platform identifier
+        // **使用过滤后的聊天记录**
+        formData.append('chats', JSON.stringify(chatsForThisInterval));
+        formData.append('roomId', roomId || 'unknown');
+        formData.append('platform', currentPlatformAdapter.platformName);
 
         if (screenshotBlob && screenshotBlob.size > 0) {
-            const timestampStr = new Date().toISOString().replace(/[:.]/g, "-");
+            const timestampStr = new Date(currentRecordingEndTimestamp).toISOString().replace(/[:.]/g, "-"); // 使用结束时间
             const screenshotFilename = `${roomId || 'unknown'}_${timestampStr}.jpg`;
             formData.append('screenshot', screenshotBlob, screenshotFilename);
         }
-        // Add recording interval timestamps
-        formData.append('startTimestamp', recordingStartTimestamp.toString());
-        formData.append('endTimestamp', recordingEndTimestamp.toString());
+        // **使用传入的时间戳**
+        formData.append('startTimestamp', currentRecordingStartTimestamp.toString());
+        formData.append('endTimestamp', currentRecordingEndTimestamp.toString());
 
-        // --- 使用 XMLHttpRequest 发送 ---
+        // --- 6. 使用 XMLHttpRequest 发送 ---
         const xhr = new XMLHttpRequest();
         xhr.open('POST', API_ENDPOINT, true);
-        xhr.timeout = 90000; // Increase timeout to 90 seconds for potentially larger uploads / slower AI processing
+        xhr.timeout = 90000;
 
         xhr.onreadystatechange = function () {
-            if (xhr.readyState === 4) { // 请求完成
+            if (xhr.readyState === 4) {
                 console.log(`[XHR] Upload complete. Status: ${xhr.status}`);
                 isSending = false; // **释放锁**
 
-                if (xhr.status >= 200 && xhr.status < 300) { // Success range
+                if (xhr.status >= 200 && xhr.status < 300) {
                     try {
                         const resp = JSON.parse(xhr.responseText);
                         console.log('Server Response:', resp);
                         if (resp.status === 'success') {
                             console.log('Server processed data successfully.');
-
-                            // —— 新：统一解析后端结构 ——
                             const parsed = parseServerResponse(resp);
-
                             console.log('> Youdao STT    :', parsed.youdao);
                             console.log('> Whisper STT   :', parsed.whisper);
                             console.log('> Internal Think:', parsed.think);
                             console.log('> Continues     :', parsed.continues);
                             console.log('> Notepad Notes :', parsed.notepadNotes);
                             console.log('> Image URL     :', parsed.imageUrl);
-
-                            // —— 处理弹幕消息 —— 
                             if (parsed.messages.length > 0) {
                                 if (isChatPermissionGranted) {
                                     console.log(`Queueing ${parsed.messages.length} message(s) from AI.`);
@@ -2121,74 +2172,72 @@
                             } else {
                                 console.log('No actionable chat messages received from AI response.');
                             }
-
                         } else {
-                            console.error(
-                                'Server returned an application error:',
-                                resp.message || "No error message provided.",
-                                resp
-                            );
+                            console.error('Server returned an application error:', resp.message || "No error message provided.", resp);
                         }
                     } catch (e) {
                         console.error('Failed to parse JSON response:', e);
                         console.error('Raw Response Text:', xhr.responseText);
                     }
+
                 } else {
-                    // HTTP 错误
                     console.error(`Failed to send data. HTTP Status: ${xhr.status} ${xhr.statusText}`);
                     console.error('Response Text:', xhr.responseText);
                 }
 
-                // —— 处理累积的音频块 —— 
+                // --- 处理累积音频 (XHR 完成后) ---
                 if (isAccumulating && accumulatedChunks.length > 0) {
-                    console.log("Processing accumulated chunks immediately after send completion.");
-                    const nextBlob = accumulatedChunks.shift();
-                    if (accumulatedChunks.length === 0) isAccumulating = false;
+                    console.log("[Send Data] 在发送完成后处理累积的音频块。");
+                    const nextBlob = accumulatedChunks.shift(); // 取出第一个
+                    if (accumulatedChunks.length === 0) isAccumulating = false; // 更新状态
 
                     if (nextBlob) {
-                        console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                        sendDataToServer(nextBlob, [], null);
+                        // 重要：累积的音频没有对应的聊天和截图，需要明确这一点
+                        // 传递的时间戳也应该是它们原始的时间范围，但我们这里没有存储，
+                        // 最简单的做法是传 null 或一个特殊标记，或者不传时间戳。
+                        // 这里我们简化处理，不传递上次聊天/截图/精确时间戳，只发送音频。
+                        // 或者，更好的是，将累积块与下一个常规块一起发送。
+                        // 当前实现是在 isSending 为 false 后，如果有累积块则立即发送。
+                        // 这意味着它没有最新的聊天/截图。
+                        console.warn("[Send Data] 立即发送累积的音频块，无关联的聊天/截图。");
+                        // 注意：调用 sendDataToServer 时，时间戳参数可能无意义或需要特殊处理
+                        // 为了简单，这里传递 0 或一个标记，后端需要能处理这种情况。
+                        // 这里我们还是用上次的时间戳，虽然不精确。
+                        sendDataToServer(nextBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, null);
                     } else {
-                        console.warn("Accumulated chunks array was manipulated unexpectedly.");
-                        isAccumulating = false;
+                        console.warn("[Send Data] 累积队列状态异常。");
+                        isAccumulating = false; // 重置状态
                     }
-                }
-            }
-        };
+                } // 结束处理累积音频
+            } // 结束 readyState === 4
+        }; // 结束 onreadystatechange
 
         xhr.onerror = function () { // 网络错误
             console.error('[XHR] Network error occurred during upload.');
             isSending = false; // **释放锁**
-            // Handle accumulated chunks after network error
+            // 处理累积音频
             if (isAccumulating && accumulatedChunks.length > 0) {
-                console.log("Processing accumulated chunks after network error.");
+                console.log("[Send Data] 网络错误后处理累积的块。");
                 const nextBlob = accumulatedChunks.shift();
                 if (accumulatedChunks.length === 0) isAccumulating = false;
                 if (nextBlob) {
-                    console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                    sendDataToServer(nextBlob, [], null);
-                } else {
-                    console.warn("Accumulated chunks array was manipulated unexpectedly.");
-                    isAccumulating = false;
-                }
+                    console.warn("[Send Data] 发送累积音频，无关联聊天/截图。");
+                    sendDataToServer(nextBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, null);
+                } else { isAccumulating = false; }
             }
         };
-
         xhr.ontimeout = function () { // 请求超时
             console.error('[XHR] Request timed out.');
             isSending = false; // **释放锁**
-            // Handle accumulated chunks after timeout
+            // 处理累积音频
             if (isAccumulating && accumulatedChunks.length > 0) {
-                console.log("Processing accumulated chunks after timeout.");
+                console.log("[Send Data] 请求超时后处理累积的块。");
                 const nextBlob = accumulatedChunks.shift();
                 if (accumulatedChunks.length === 0) isAccumulating = false;
                 if (nextBlob) {
-                    console.warn("Sending accumulated audio chunk without fresh chat/screenshot context.");
-                    sendDataToServer(nextBlob, [], null);
-                } else {
-                    console.warn("Accumulated chunks array was manipulated unexpectedly.");
-                    isAccumulating = false;
-                }
+                    console.warn("[Send Data] 发送累积音频，无关联聊天/截图。");
+                    sendDataToServer(nextBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, null);
+                } else { isAccumulating = false; }
             }
         };
 
@@ -2220,9 +2269,11 @@
         if (FORCE_CHAT_LENGTH > 0) {
             currentMaxChatLength = FORCE_CHAT_LENGTH;
         } else if (currentPlatformAdapter?.platformName === 'YouTube') {
-            currentMaxChatLength = 100; // YouTube专用
+            currentMaxChatLength = 100; // YouTube默认切分值
         } else if (currentPlatformAdapter?.platformName === 'Bilibili') {
-            currentMaxChatLength = 20; // Bilibili专用（其实就是MAX_CHAT_LENGTH）
+            currentMaxChatLength = 20; // Bilibili默认切分值
+        } else if (currentPlatformAdapter?.platformName === 'Twitch') {
+            currentMaxChatLength = 100; // Twitch默认切分值
         }
 
         // 若整体就不超长，直接返回
@@ -2374,6 +2425,19 @@
         min = Math.ceil(min); // 向上取整
         max = Math.floor(max); // 向下取整
         return Math.floor(Math.random() * (max - min + 1)) + min; // 返回范围内的随机整数
+    }
+
+    // 辅助函数：用于生成基于用户名的哈希值，作为备用 UID
+    // 注意：这是一个非常基础的哈希函数，主要用于临时标识，可能存在碰撞
+    function generateHash(str) {
+        if (!str) return null;
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash |= 0; // Convert to 32bit integer
+        }
+        return String(hash); // 返回字符串形式
     }
 
     // --- 脚本入口点 ---
