@@ -32,9 +32,9 @@ It consists of two main parts:
 
 *   **Currently Supported:**
     *   YouTube Live (`youtube.com`)
+    *   Twitch (`twitch.tv`)
     *   Bilibili Live (`live.bilibili.com`)
 *   **Planned Future Support:**
-    *   Twitch (`twitch.tv`)
     *   Huya.com ([huya.com](https://www.huya.com/))
     *   Douyu.com ([douyu.com](https://douyu.com/))
     *   Other popular platforms (contributions welcome!)
