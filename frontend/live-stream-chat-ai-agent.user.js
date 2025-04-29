@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.1.2
+// @version      1.2.0
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -9,6 +9,7 @@
 // @author       bOc
 // @match        https://live.bilibili.com/*
 // @match        https://www.youtube.com/watch*
+// @match        https://www.twitch.tv/*
 // @grant        none
 // ==/UserScript==
 
@@ -248,51 +249,72 @@
             isApplicable: () => window.location.hostname.includes('youtube.com') && window.location.pathname.startsWith('/watch'),
 
             /**
-             * 从页面同步提取 YouTube 频道用户名或ID。
+             * 异步提取 YouTube 频道用户名或 ID。
              * 支持 href="/@username" 和 href="/channel/UCxxx"。
-             * 如果一开始取不到，会挂一个 setTimeout 重试。
-             * @returns {string|null}
+             * 如果一开始取不到，会自动重试，直到成功或超时。
+             * @returns {Promise<string|null>} 返回 Promise，解析为找到的频道 ID 或 null。
              */
             getRoomId: (() => {
                 let cachedRoomId = null;
-                let retries = 0;
-                const maxRetries = 10;
-                const retryInterval = 500; // ms
+                let isSearching = false; // 防止重复搜索
+                let waitingResolvers = [];
 
-                const selectors = [
-                    '#upload-info ytd-channel-name a[href^="/@"]',
-                    '#upload-info ytd-channel-name a[href^="/channel/"]',
-                    'ytd-channel-name a[href^="/@"]',
-                    'ytd-channel-name a[href^="/channel/"]',
-                ];
-
-                function tryFindRoomId() {
-                    const link = selectors
-                        .map(sel => document.querySelector(sel))
-                        .find(el => el !== null);
-
-                    if (link) {
-                        const href = link.getAttribute('href');
-                        let match = href.match(/^\/@([^/]+)/) || href.match(/^\/channel\/([^/]+)/);
-                        if (match) {
-                            console.log("YouTube Adapter: Found channel ID/username:", match[1]);
-                            cachedRoomId = match[1];
+                return () => {
+                    return new Promise(resolve => {
+                        if (cachedRoomId) {
+                            resolve(cachedRoomId);
                             return;
                         }
-                    }
 
-                    if (retries < maxRetries) {
-                        retries++;
-                        console.log(`YouTube Adapter: Retry finding channel ID/username (${retries}/${maxRetries})...`);
-                        setTimeout(tryFindRoomId, retryInterval);
-                    } else {
-                        console.error("YouTube Adapter: Failed to find channel ID/username after retries.");
-                    }
-                }
+                        waitingResolvers.push(resolve);
 
-                setTimeout(tryFindRoomId, 0);
+                        if (isSearching) return;
+                        isSearching = true;
 
-                return () => cachedRoomId;
+                        let retries = 0;
+                        const maxRetries = 10;
+                        const retryInterval = 500; // ms
+
+                        const selectors = [
+                            '#upload-info ytd-channel-name a[href^="/@"]',
+                            '#upload-info ytd-channel-name a[href^="/channel/"]',
+                            'ytd-channel-name a[href^="/@"]',
+                            'ytd-channel-name a[href^="/channel/"]',
+                        ];
+
+                        const tryFindRoomId = () => {
+                            const link = selectors
+                                .map(sel => document.querySelector(sel))
+                                .find(el => el !== null);
+
+                            if (link) {
+                                const href = link.getAttribute('href');
+                                const match = href.match(/^\/@([^/]+)/) || href.match(/^\/channel\/([^/]+)/);
+                                if (match) {
+                                    console.log("YouTube Adapter: Found channel ID/username:", match[1]);
+                                    cachedRoomId = match[1];
+                                    waitingResolvers.forEach(r => r(cachedRoomId));
+                                    waitingResolvers = [];
+                                    isSearching = false;
+                                    return;
+                                }
+                            }
+
+                            if (retries < maxRetries) {
+                                retries++;
+                                console.log(`YouTube Adapter: Retry finding channel ID/username (${retries}/${maxRetries})...`);
+                                setTimeout(tryFindRoomId, retryInterval);
+                            } else {
+                                console.error("YouTube Adapter: Failed to find channel ID/username after retries.");
+                                waitingResolvers.forEach(r => r(null));
+                                waitingResolvers = [];
+                                isSearching = false;
+                            }
+                        };
+
+                        setTimeout(tryFindRoomId, 0);
+                    });
+                };
             })(),
 
             /**
@@ -543,7 +565,200 @@
                 }
             },
             // YouTube 的其他特定函数
-        }
+        },
+        twitch: {
+            platformName: "Twitch",
+
+            /**
+             * 判斷當前頁面是否為 Twitch 直播頁。
+             * @returns {boolean}
+             */
+            isApplicable: () => {
+                return window.location.hostname.includes('twitch.tv') && window.location.pathname.length > 1;
+            },
+
+            /**
+             * 提取 Twitch 頻道名稱（用於作為 RoomId）。
+             * @returns {string|null}
+             */
+            getRoomId: () => {
+                const path = window.location.pathname;
+                if (path && path.length > 1) {
+                    return path.slice(1); // 去掉開頭的 '/'
+                }
+                return null;
+            },
+
+            /**
+             * 查找 Twitch 上的視頻元素。
+             * @returns {HTMLVideoElement|null}
+             */
+            findVideoElement: () => {
+                const video = document.querySelector('video');
+                if (!video) {
+                    console.warn("Twitch Adapter: 無法找到 <video> 元素。");
+                }
+                return video;
+            },
+
+            /**
+             * 收集在錄音起止時間範圍內的 Twitch 聊天消息。
+             * @param {number} recordingStartTimestamp - 錄製開始時間戳 (ms)
+             * @param {number} recordingEndTimestamp - 錄製結束時間戳 (ms)
+             * @returns {Array<object>} 聊天消息列表
+             */
+            collectChatMessages: (recordingStartTimestamp, recordingEndTimestamp) => {
+                const newChats = [];
+                const chatElements = document.querySelectorAll('.chat-line__message');
+
+                console.log(`[Twitch Adapter] 找到聊天元素数量: ${chatElements.length}`);
+
+                if (!chatElements || chatElements.length === 0) {
+                    console.warn("[Twitch Adapter] 未找到聊天訊息元素 .chat-line__message。");
+                    return newChats;
+                }
+
+                const startDate = new Date(recordingStartTimestamp);
+                const endDate = new Date(recordingEndTimestamp);
+                const allowedVisibleTimestamps = new Set();
+
+                console.log(`[Twitch Adapter] 錄音開始: ${startDate.toISOString()}，結束: ${endDate.toISOString()}`);
+
+                // 生成從開始到結束分鐘的可見時間字符串集合
+                try {
+                    let currentMinuteDate = new Date(startDate);
+                    currentMinuteDate.setSeconds(0, 0);
+
+                    const endMinuteStartTimestamp = new Date(endDate);
+                    endMinuteStartTimestamp.setSeconds(0, 0);
+
+                    let iterations = 0;
+                    const maxIterations = 1440; // 24小時上限
+                    while (currentMinuteDate.getTime() <= endMinuteStartTimestamp.getTime() && iterations < maxIterations) {
+                        const hh = currentMinuteDate.getHours().toString().padStart(2, '0');
+                        const mm = currentMinuteDate.getMinutes().toString().padStart(2, '0');
+                        allowedVisibleTimestamps.add(`${hh}:${mm}`);
+                        currentMinuteDate.setMinutes(currentMinuteDate.getMinutes() + 1);
+                        iterations++;
+                    }
+                    console.log(`[Twitch Adapter] 允許的時間戳範圍集合:`, [...allowedVisibleTimestamps]);
+                } catch (err) {
+                    console.error("[Twitch Adapter] 生成允許時間集合時出錯:", err);
+                    return newChats;
+                }
+
+                chatElements.forEach((chatEl, idx) => {
+                    try {
+                        const timestampSpan = chatEl.querySelector('.chat-line__timestamp');
+                        const usernameSpan = chatEl.querySelector('.chat-author__display-name');
+                        const messageSpan = chatEl.querySelector('span[data-a-target="chat-message-text"]');
+
+                        if (timestampSpan && usernameSpan && messageSpan) {
+                            const visibleTime = timestampSpan.textContent.trim(); // 例如 '19:44'
+                            console.log(`[Twitch Adapter] 第${idx + 1}個訊息: timestamp=${visibleTime}`);
+
+                            if (allowedVisibleTimestamps.has(visibleTime)) {
+                                const uname = usernameSpan.textContent.trim();
+                                const content = messageSpan.textContent.trim();
+                                console.log(`[Twitch Adapter] => 命中時間範圍，收集 uname=${uname}, content=${content}`);
+
+                                if (uname && content) {
+                                    newChats.push({
+                                        uname: uname,
+                                        content: content,
+                                        platform: 'twitch',
+                                        timestamp: Math.floor(recordingStartTimestamp / 1000) // 錄音開始秒數
+                                    });
+                                }
+                            } else {
+                                console.log(`[Twitch Adapter] => 時間不符合，跳過`);
+                            }
+                        } else {
+                            console.warn(`[Twitch Adapter] 第${idx + 1}個訊息：缺少必要元素 timestamp/user/message`, chatEl);
+                        }
+                    } catch (e) {
+                        console.error("[Twitch Adapter] 收集聊天時出錯:", e, chatEl);
+                    }
+                });
+
+                console.log(`[Twitch Adapter] 最終收集到 ${newChats.length} 條聊天消息`);
+                return newChats;
+            },
+
+            /**
+             * 在 Twitch 页面模拟输入并发送聊天消息。
+             * @param {string} message - 要发送的消息内容。
+             * @returns {Promise<string>} 'success' | 'disabled' | 'not_found' | 'error'
+             */
+            sendChatMessage(message) {
+                return new Promise((resolve) => {
+                    if (typeof message !== 'string' || !message.trim()) {
+                        console.error("Twitch适配器：消息为空或非法，无法发送。");
+                        resolve('error');
+                        return;
+                    }
+
+                    const target = document.querySelector('div[data-slate-node="element"]');
+                    const sendButton = document.querySelector('button[data-a-target="chat-send-button"]');
+
+                    if (!target) {
+                        console.error("Twitch适配器：找不到聊天输入框 (div[data-slate-node='element'])。");
+                        resolve('not_found');
+                        return;
+                    }
+                    if (!sendButton) {
+                        console.error("Twitch适配器：找不到发送按钮 (button[data-a-target='chat-send-button'])。");
+                        resolve('not_found');
+                        return;
+                    }
+
+                    if (sendButton.disabled) {
+                        console.warn("Twitch适配器：发送按钮当前禁用（慢速模式或禁言）。");
+                        resolve('disabled');
+                        return;
+                    }
+
+                    try {
+                        // 聚焦并选中输入框
+                        target.focus();
+                        const range = document.createRange();
+                        range.selectNodeContents(target);
+                        const selection = window.getSelection();
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+
+                        // 模拟粘贴 message 内容
+                        const pasteEvent = new ClipboardEvent('paste', {
+                            clipboardData: (() => {
+                                const data = new DataTransfer();
+                                data.setData('text/plain', message);
+                                return data;
+                            })(),
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        target.dispatchEvent(pasteEvent);
+
+                        // 等待一点时间，保证粘贴后的状态稳定
+                        setTimeout(() => {
+                            if (!sendButton.disabled) {
+                                sendButton.click();
+                                console.log(`✅ Twitch适配器：已成功发送消息 "${message}"`);
+                                resolve('success');
+                            } else {
+                                console.warn("Twitch适配器：点击前按钮被禁用了。");
+                                resolve('disabled');
+                            }
+                        }, 100); // 延迟 100ms 等待 paste 完成
+
+                    } catch (err) {
+                        console.error("Twitch适配器：发送聊天消息时发生错误：", err);
+                        resolve('error');
+                    }
+                });
+            }
+            // twitch
+        },
         // Add more platforms here if needed
     };
 
@@ -639,7 +854,7 @@
                 }
             }
 
-            // 如果平台确认可用 (Bilibili, 或 YouTube 直播)
+            // 如果平台确认可用
             if (shouldUseAdapter) {
                 currentPlatformAdapter = adapter;
                 console.log(`AI Agent: 为平台激活: ${currentPlatformAdapter.platformName}`);
