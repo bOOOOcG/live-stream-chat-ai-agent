@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.3.1
+// @version      1.3.2
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -33,7 +33,7 @@
             platformName: "Bilibili",
             chatContainerSelector: '#chat-items', // 聊天容器的选择器
             chatMessageSelector: '.chat-item.danmaku-item', // 新聊天消息元素的选择器
-            
+
             isApplicable: () => window.location.hostname.includes('live.bilibili.com'),
 
             /**
@@ -212,7 +212,7 @@
             platformName: "YouTube",
             chatContainerSelector: '#items.yt-live-chat-item-list-renderer', // YouTube iframe 内的聊天列表容器
             chatMessageSelector: 'yt-live-chat-text-message-renderer, yt-live-chat-paid-message-renderer, yt-live-chat-paid-sticker-renderer, yt-live-chat-membership-item-renderer', // YouTube 的各种聊天消息类型
-            
+
             isApplicable: () => window.location.hostname.includes('youtube.com') && window.location.pathname.startsWith('/watch'),
 
             /**
@@ -693,6 +693,9 @@
     let currentPlatformAdapter = null;
     let roomId = null; // 将 roomId 初始化为 null
 
+    let currentVideoElement = null; // 跟踪当前使用的视频元素
+    let videoReplacementObserver = null; // 用于监视视频替换的Observer
+
     // 循环遍历适配器以找到匹配的
     for (const platformKey in platformAdapters) {
         const adapter = platformAdapters[platformKey];
@@ -1150,9 +1153,11 @@
         mainSwitch.addEventListener('change', () => {
             isMainSwitchOn = mainSwitch.checked;
             console.log("主控制开关状态:", isMainSwitchOn);
-            // 只有当主开关打开且视频元素存在时，才启用运行按钮
-            const videoElement = currentPlatformAdapter?.findVideoElement();
+
+            // 检查按钮状态：需要主开关打开，并且(我们已经跟踪了一个有效的视频元素 或 适配器能找到一个)
+            const videoElement = currentVideoElement || currentPlatformAdapter?.findVideoElement();
             runButton.disabled = !(isMainSwitchOn && !!videoElement);
+
             console.log("运行按钮禁用状态:", runButton.disabled);
             if (!isMainSwitchOn && isAgentRunning) {
                 console.log("主控制关闭，停止代理...");
@@ -1426,8 +1431,8 @@
     }
 
     /**
-     * 启动 AI 代理的核心逻辑。
-     */
+         * 启动 AI 代理的核心逻辑。包含初始视频检查和启动监控。
+         */
     function startAgent() {
         if (isAgentRunning) {
             console.warn("Agent is already running.");
@@ -1437,23 +1442,41 @@
             console.warn("Cannot start agent, Master Control is OFF.");
             return;
         }
-        // Ensure Room ID is valid before starting
+        // 启动前再次检查 Room ID
         if (!roomId) {
-            console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, invalid Room/Video ID.`);
-            alert("错误：无法获取房间/视频 ID，请检查页面是否为有效直播/视频页。");
-            return;
+            console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, invalid Room/Video ID: ${roomId}. Trying refetch...`);
+            // 尝试重新获取一次roomId，如果失败则提示并退出
+            waitForRoomId(currentPlatformAdapter, 1, 100).then(refetchedId => {
+                if (refetchedId) {
+                    roomId = refetchedId;
+                    console.log(`Room ID re-fetched: ${roomId}. Please click Start again.`);
+                    alert("已重新获取房间ID，请再次点击 Start。");
+                } else {
+                    alert("错误：无法获取房间/视频 ID。请检查页面或刷新重试。");
+                }
+            });
+            return; // 退出当前启动尝试
         }
-        if (!currentPlatformAdapter.findVideoElement()) {
-            console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, video element not found.`);
-            alert("错误：未找到视频元素，请确保直播/视频已加载。");
+
+        console.log("Attempting to start AI Agent...");
+
+        // 启动前先检查视频元素是否存在
+        const initialVideoElement = currentPlatformAdapter.findVideoElement();
+        if (!initialVideoElement) {
+            console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, initial video element not found.`);
+            alert("错误：启动时未找到视频元素。请确保直播已加载。");
+            runButton.disabled = true; // 保持禁用，需要用户干预或等待
             return;
         }
 
-        console.log("Starting AI Agent...");
-        if (initializeAudio()) { // 初始化音频成功
+        // 尝试使用找到的元素初始化音频
+        // 注意：initializeAudio 现在接收 videoElement 参数
+        if (initializeAudio(initialVideoElement)) { // <--- 传入找到的元素
             isAgentRunning = true; // 设置代理运行状态标志
-            startRecordingCycle(); // 开始录制循环
+            startRecordingCycle(); // 开始录制循环 (使用已初始化的 destination)
             startChatObserver();   // 启动聊天监听器
+            startVideoReplacementObserver(); // <--- 启动视频替换监视
+
             // 更新按钮状态
             runButton.textContent = 'Stop'; // 中文
             runButton.classList.add('running');
@@ -1465,30 +1488,64 @@
             isAgentRunning = false; // 确保运行状态为 false
             runButton.textContent = 'Start'; // 中文
             runButton.classList.remove('running');
-            // Make button available if main switch is on, even if audio failed, so user can retry
+            // 即使音频失败，如果主开关打开，按钮也应可用，以便用户重试
             runButton.disabled = !isMainSwitchOn;
+            currentVideoElement = null; // 初始化失败时，清除跟踪的元素
         }
     }
 
     /**
-     * 停止 AI 代理的核心逻辑。
+     * 停止 AI 代理的核心逻辑。包含停止视频监控和清理资源。
      */
     function stopAgent() {
         if (!isAgentRunning) {
-            console.warn("Agent is not running.");
+            // console.warn("Agent is not running."); // 可以取消注释方便调试
             return;
         }
         console.log("Stopping AI Agent...");
-        isAgentRunning = false; // 清除代理运行状态标志 *先于* 停止录制器
+        isAgentRunning = false; // 清除代理运行状态标志 *先于* 停止其他组件
 
+        stopVideoReplacementObserver(); // <--- 停止视频监视
         stopRecordingAndProcessing(); // 停止录制和处理流程
         stopChatObserver(); // 停止chat监听器
+        cleanupAudioResources(); // <--- 调用清理音频资源的函数
 
         // 更新按钮状态
         runButton.textContent = 'Start'; // 中文
         runButton.classList.remove('running');
-        // 确保主开关打开且视频元素存在时，按钮是可用的
-        runButton.disabled = !(isMainSwitchOn && !!currentPlatformAdapter.findVideoElement());
+        // 确保主开关打开且(当前跟踪的视频元素存在 或 适配器能找到视频元素)时，按钮是可用的
+        // <--- 修改了按钮状态检查逻辑
+        runButton.disabled = !(isMainSwitchOn && !!(currentVideoElement || currentPlatformAdapter?.findVideoElement()));
+
+        currentVideoElement = null; // <--- 清除跟踪的视频元素引用
+
+        console.log("AI Agent stopped.");
+    }
+
+    /**
+     * 停止 AI 代理的核心逻辑。包含停止视频监控和清理资源。
+     */
+    function stopAgent() {
+        if (!isAgentRunning) {
+            // console.warn("Agent is not running."); // 可以取消注释方便调试
+            return;
+        }
+        console.log("Stopping AI Agent...");
+        isAgentRunning = false; // 清除代理运行状态标志 *先于* 停止其他组件
+
+        stopVideoReplacementObserver(); // <--- 停止视频监视
+        stopRecordingAndProcessing(); // 停止录制和处理流程
+        stopChatObserver(); // 停止chat监听器
+        cleanupAudioResources(); // <--- 调用清理音频资源的函数
+
+        // 更新按钮状态
+        runButton.textContent = 'Start'; // 中文
+        runButton.classList.remove('running');
+        // 确保主开关打开且(当前跟踪的视频元素存在 或 适配器能找到视频元素)时，按钮是可用的
+        // <--- 修改了按钮状态检查逻辑
+        runButton.disabled = !(isMainSwitchOn && !!(currentVideoElement || currentPlatformAdapter?.findVideoElement()));
+
+        currentVideoElement = null; // <--- 清除跟踪的视频元素引用
 
         console.log("AI Agent stopped.");
     }
@@ -1530,106 +1587,118 @@
     }
 
     /**
-     * 初始化 AudioContext 并连接视频元素源。
-     * @returns {boolean} 如果初始化成功则为 true，否则为 false。
-     */
-    function initializeAudio() {
-        // Use platform adapter to find video element
-        const videoElement = currentPlatformAdapter.findVideoElement();
-        if (!videoElement) {
-            console.error("Cannot initialize audio: Video element not found by adapter.");
+      * 初始化或重新初始化 AudioContext 并连接视频元素源。
+      * 现在接受要使用的视频元素。
+      * @param {HTMLVideoElement} videoElement - 要连接的视频元素。
+      * @returns {boolean} True 如果成功, false 否则。
+      */
+    function initializeAudio(videoElement) {
+        // 检查传入的 videoElement 是否有效且已连接到 DOM
+        if (!videoElement || !videoElement.isConnected) {
+            console.error("无法初始化音频: 提供的 video 元素无效或已断开连接。");
+            currentVideoElement = null; // 确保清除跟踪的元素
             return false;
         }
-        // 确保视频有音轨（readyState 考虑改为 HAVE_METADATA 或更高）
-        if (videoElement.readyState < 1) { // HAVE_NOTHING or HAVE_METADATA is often enough to get tracks
-            console.warn(`Video element readyState (${videoElement.readyState}) might be too low. Audio capture could fail if tracks are not ready.`);
-            // Try connecting anyway, browsers might handle it.
-        }
-        // Check for actual audio tracks
-        const audioTracks = videoElement.captureStream ? videoElement.captureStream().getAudioTracks() : (videoElement.mozCaptureStream ? videoElement.mozCaptureStream().getAudioTracks() : []);
-        if (audioTracks.length === 0 && videoElement.readyState < 3) { // HAVE_CURRENT_DATA or more likely needed for source node
-            console.warn("Video element does not seem to have audio tracks yet or is not playing.");
-            // Proceed, but it might naturally fail later if no audio comes through.
-        }
+        console.log("使用 video 元素初始化音频:", videoElement);
+
+        // 检查视频状态和音轨 (可选，有助于调试)
+        if (videoElement.readyState < 1) { console.warn(`视频 readyState (${videoElement.readyState}) 过低。`); }
+        const audioTracks = getVideoAudioTracks(videoElement); // 使用辅助函数
+        if (audioTracks.length === 0 && videoElement.readyState < 3) { console.warn("视频可能还没有音轨。"); }
 
         try {
-            // 如果 AudioContext 不存在或已关闭，则创建新的
+            // 如果需要，初始化 AudioContext (只在第一次或关闭后)
             if (!audioContext || audioContext.state === 'closed') {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                console.log("AudioContext created or recreated.");
+                console.log("AudioContext 已创建/重新创建。状态:", audioContext.state);
             }
-            // 如果 AudioContext 被挂起（例如，由于用户交互），尝试恢复
+            // 尝试恢复挂起的 AudioContext
             if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => {
-                    console.log("AudioContext resumed successfully.");
-                }).catch(e => {
-                    console.error("Failed to resume AudioContext:", e);
-                    // This might be critical, audio won't work.
-                });
+                audioContext.resume().then(() => console.log("AudioContext 已恢复。"))
+                    .catch(e => console.error("恢复 AudioContext 失败:", e));
             }
 
-            // 仅当节点不存在时才创建它们
+            // --- 关键：只在节点不存在时创建它们 ---
             if (!destination) {
-                destination = audioContext.createMediaStreamDestination(); // 创建录音目标节点
-                console.log("MediaStreamAudioDestinationNode created.");
+                // destination 是录音器使用的目标，不能重新创建，否则录音会断开！
+                destination = audioContext.createMediaStreamDestination();
+                console.log("MediaStreamAudioDestinationNode 已创建。");
             }
-            // 每次都尝试重新连接源，以防视频元素被替换
+            if (!gainNode) {
+                gainNode = audioContext.createGain(); // 音量控制节点
+                console.log("GainNode 已创建。");
+            }
+
+            // --- 重新连接 *源* 节点 ---
+            // 1. 断开 *旧的* 源节点 (如果存在)
             if (mediaElementSource) {
                 try {
-                    mediaElementSource.disconnect(); // 断开旧连接
-                } catch (e) {
-                    console.warn("Minor error disconnecting old media element source:", e);
-                }
+                    mediaElementSource.disconnect();
+                    console.log("已断开旧的 MediaElementSource。");
+                } catch (e) { console.warn("断开旧源时出现小错误:", e); }
+                mediaElementSource = null; // 清除引用
             }
-            // Error handling specifically for createMediaElementSource
+
+            // 2. 创建并连接 *新的* 源节点
             try {
-                mediaElementSource = audioContext.createMediaElementSource(videoElement); // 从视频创建源节点
-                console.log("MediaElementAudioSourceNode created/reconnected.");
-            } catch (sourceError) {
-                console.error("Error creating MediaElementAudioSourceNode:", sourceError);
-                // This usually happens if the element doesn't have audio or isn't properly loaded
-                if (videoElement.src) {
-                    console.error("Video source:", videoElement.src); // Log src for debugging
+                // 直接从新的 videoElement 创建
+                mediaElementSource = audioContext.createMediaElementSource(videoElement);
+                console.log("为 video 创建了新的 MediaElementSource:", videoElement);
+            } catch (sourceError) { // 处理创建错误 (例如元素没有音轨)
+                console.error("创建 MediaElementSource 时出错:", sourceError);
+                // 尝试使用 captureStream 作为备选方案
+                if (videoElement.captureStream && getVideoAudioTracks(videoElement).length > 0) {
+                    console.log("尝试使用 captureStream() 作为备选方案。");
+                    try {
+                        const mediaStream = videoElement.captureStream();
+                        mediaElementSource = audioContext.createMediaStreamSource(mediaStream);
+                        console.log("已从 captureStream 创建备选 MediaStreamSource。");
+                    } catch (fallbackErr) {
+                        console.error("captureStream() 备选方案也失败了:", fallbackErr);
+                        throw sourceError; // 如果备选失败，重新抛出原始错误
+                    }
                 } else {
-                    console.error("Video element has no 'src' attribute.");
-                }
-                // Attempt to use captureStream as a fallback if supported
-                if (videoElement.captureStream && audioTracks.length > 0) {
-                    console.log("Attempting fallback using captureStream().");
-                    const mediaStream = videoElement.captureStream();
-                    mediaElementSource = audioContext.createMediaStreamSource(mediaStream);
-                    console.log("Fallback MediaStreamSource created.");
-
-                } else {
-                    throw sourceError; // Re-throw if fallback not possible
+                    throw sourceError; // 如果没有备选方案，重新抛出错误
                 }
             }
 
-            if (!gainNode) {
-                gainNode = audioContext.createGain(); // 创建音量控制节点
-                console.log("GainNode created.");
-            }
-
-            // 设置音频处理管线:
-            // video source -> 音量控制 -> 录音目标 (用于录制)
-            // video source -> 音量控制 -> 实际输出 (用于收听)
+            // 3. 连接音频管线:
+            // 新源 -> 音量控制 -> 录音目标 (destination)
+            // 音量控制 -> 扬声器 (audioContext.destination)
             mediaElementSource.connect(gainNode);
-            gainNode.connect(destination); // 连接音量节点到录音目标
-            gainNode.connect(audioContext.destination); // 连接音量节点到实际扬声器
+            gainNode.connect(destination); // 连接到录音器使用的目标！
+            gainNode.connect(audioContext.destination); // 连接到实际扬声器
 
-            console.log("Audio nodes connected.");
-            updateGain(); // 根据 UI 设置初始音量
-            return true;
+            console.log("音频节点已重新连接。");
+            updateGain(); // 应用当前的音量/静音设置
+
+            // *** 重要：更新跟踪的视频元素引用 ***
+            currentVideoElement = videoElement;
+            console.log("跟踪的视频元素已更新。");
+
+            return true; // 初始化/重新初始化成功
+
         } catch (error) {
-            console.error("Error initializing audio context or nodes:", error);
-            // 清理可能部分创建的元素
-            if (gainNode) { try { gainNode.disconnect(); } catch (e) { } }
-            if (mediaElementSource) { try { mediaElementSource.disconnect(); } catch (e) { } }
-            // Do not null out audioContext, maybe it can be resumed/reused
-            destination = null;
-            mediaElementSource = null;
-            gainNode = null;
-            return false;
+            console.error("音频初始化/重新初始化期间出错:", error);
+            // 清理可能部分创建的 *源* 节点
+            if (mediaElementSource) { try { mediaElementSource.disconnect(); } catch (e) { } mediaElementSource = null; }
+            // 不要销毁 gainNode 和 destination，它们可能可以重用
+            currentVideoElement = null; // 失败时清除跟踪的元素
+            return false; // 操作失败
+        }
+    }
+
+    /** 辅助函数：可靠地获取视频音轨 */
+    function getVideoAudioTracks(videoEl) {
+        if (!videoEl) return [];
+        try {
+            // 优先使用 captureStream，兼容 mozCaptureStream
+            const stream = videoEl.captureStream ? videoEl.captureStream() : (videoEl.mozCaptureStream ? videoEl.mozCaptureStream() : null);
+            return stream ? stream.getAudioTracks() : [];
+        } catch (e) {
+            // 忽略错误，例如在元素还没准备好时调用
+            // console.warn("获取音轨时出错 (captureStream 可能未就绪/不允许):", e.message);
+            return [];
         }
     }
 
@@ -1796,8 +1865,11 @@
             if (label === 'Recorder 1') isRecorder1Active = false;
             else isRecorder2Active = false;
 
-            alert(`录制器 ${label} 发生错误: ${errorMsg}\n请检查控制台并可能需要重启代理。`);
-            stopAgent(); // 在错误时停止整个代理
+            // 如果代理仍在运行，尝试检查视频元素并重新初始化音频系统作为恢复手段
+            if (isAgentRunning) {
+                console.warn(`录制器错误发生，尝试检查视频元素并恢复...`);
+                checkForVideoReplacement(); // 调用检查函数，它会处理后续逻辑
+            }
         };
     }
 
@@ -2439,6 +2511,143 @@
             hash |= 0; // Convert to 32bit integer
         }
         return String(hash); // 返回字符串形式
+    }
+
+    /**
+ * 启动 MutationObserver 来观察视频元素的替换。
+ */
+    function startVideoReplacementObserver() {
+        if (videoReplacementObserver) return; // 已经在运行
+
+        // 定义观察到变化时的回调
+        const observerCallback = (mutationsList, observer) => {
+            // 可以添加防抖/节流来避免过于频繁的检查，但通常不是必需的
+            checkForVideoReplacement();
+        };
+
+        videoReplacementObserver = new MutationObserver(observerCallback);
+
+        // 监视 body 下的所有子节点添加/删除，这样比较通用
+        // 如果性能有问题，可以尝试监视更精确的父容器
+        const targetNode = document.body;
+        const config = { childList: true, subtree: true }; // 监视子节点和整个子树
+
+        try {
+            videoReplacementObserver.observe(targetNode, config);
+            console.log("%cAI Agent: 视频替换监视器已启动。", "color: orange;");
+        } catch (e) {
+            console.error("启动视频替换监视器失败:", e);
+            videoReplacementObserver = null;
+        }
+    }
+
+    /**
+     * 停止视频替换监视器。
+     */
+    function stopVideoReplacementObserver() {
+        if (videoReplacementObserver) {
+            videoReplacementObserver.disconnect();
+            videoReplacementObserver = null;
+            console.log("%cAI Agent: 视频替换监视器已停止。", "color: orange;");
+        }
+    }
+
+    /**
+     * 检查视频元素是否需要重新初始化。
+     * 由监视器回调或其他错误处理程序调用。
+     */
+    function checkForVideoReplacement() {
+        if (!isAgentRunning) return; // 仅在代理运行时检查
+
+        // 尝试使用适配器找到当前有效的视频元素
+        const newVideoElement = currentPlatformAdapter.findVideoElement();
+
+        // 情况 1: 当前找不到任何视频元素
+        if (!newVideoElement) {
+            if (currentVideoElement) {
+                // 之前有跟踪的元素，但现在找不到了
+                console.warn("跟踪的视频元素丢失，且未找到新的。");
+                // 可以选择停止代理或等待。这里先清除引用并等待。
+                currentVideoElement = null;
+            }
+            // 如果本来就没有跟踪的元素 (currentVideoElement === null)，则无需操作
+            return;
+        }
+
+        // 情况 2: 找到了视频元素，需要判断是否要更新
+        // 条件 1: 之前没有跟踪元素 (刚启动或丢失后重新找到)
+        // 条件 2: 之前跟踪的元素从 DOM 中移除了 (!isConnected)
+        // 条件 3: 找到的元素和之前跟踪的不是同一个元素
+        const oldElementLost = currentVideoElement && !currentVideoElement.isConnected;
+        const foundDifferentElement = newVideoElement !== currentVideoElement;
+
+        if (!currentVideoElement || oldElementLost || foundDifferentElement) {
+            // 打印原因，方便调试
+            if (oldElementLost) console.log("检测到跟踪的视频元素已断开连接。");
+            else if (foundDifferentElement && currentVideoElement) console.log("检测到不同的视频元素。");
+            else if (!currentVideoElement) console.log("检测到初始/新的视频元素。");
+
+            // 调用重新初始化流程
+            reinitializeAudioSystem(newVideoElement);
+        }
+
+        // 情况 3: 找到的元素和跟踪的是同一个，且已连接 - 无需操作
+    }
+
+    /**
+     * 处理因视频更改而重新初始化音频的过程。
+     * @param {HTMLVideoElement} newVideoElement - 要使用的新视频元素。
+     */
+    function reinitializeAudioSystem(newVideoElement) {
+        // 再次检查代理是否仍在运行
+        if (!isAgentRunning) {
+            console.warn("代理已停止，跳过音频重新初始化。");
+            return;
+        }
+        console.log("%cAI Agent: 正在为新的视频元素重新初始化音频系统...", "color: blue; font-weight: bold;");
+
+        // 尝试重新初始化音频连接 (这个函数会更新 currentVideoElement)
+        if (initializeAudio(newVideoElement)) {
+            // 如果成功，通常不需要重启 MediaRecorder，因为它们连接的是 destination.stream
+            console.log("%cAI Agent: 音频系统成功重新初始化。", "color: blue;");
+        } else {
+            // 如果重新初始化失败，这可能是一个严重问题
+            console.error("重新初始化音频系统失败。代理可能停止捕获音频！");
+            // 可以考虑在这里停止代理，防止后续错误
+            // stopAgent();
+        }
+    }
+
+    /**
+    * 集中清理音频相关资源。
+    */
+    function cleanupAudioResources() {
+        console.log("正在清理音频资源...");
+
+        // 停止可能仍在运行的录制器 (以防万一)
+        if (mediaRecorder1 && mediaRecorder1.state !== 'inactive') try { mediaRecorder1.stop() } catch (e) {/*忽略停止错误*/ }
+        if (mediaRecorder2 && mediaRecorder2.state !== 'inactive') try { mediaRecorder2.stop() } catch (e) {/*忽略停止错误*/ }
+        mediaRecorder1 = null; recorder1Timeout = null;
+        mediaRecorder2 = null; recorder2Timeout = null;
+        chunks1 = []; chunks2 = []; accumulatedChunks = []; isAccumulating = false;
+
+        // 断开音频节点连接
+        if (gainNode) try { gainNode.disconnect(); } catch (e) { }
+        if (mediaElementSource) try { mediaElementSource.disconnect(); } catch (e) { }
+        if (destination) try { destination.disconnect(); } catch (e) { } // 通常不需要，但以防万一
+
+        // 可选：完全关闭 AudioContext (如果确定不再需要)
+        // if (audioContext && audioContext.state !== 'closed') {
+        //    audioContext.close().then(() => console.log("AudioContext closed.")).catch(e => console.error("Error closing AudioContext:", e));
+        //    audioContext = null; // 关闭后需要设为 null
+        //    destination = null; // Context 关闭后，destination 也无效了
+        // } else {
+        // 如果不关闭 Context，则不清空 audioContext 和 destination 引用
+        // }
+        mediaElementSource = null; // 源总是需要清除
+        gainNode = null;           // gainNode 也清除
+
+        console.log("音频资源已清理。");
     }
 
     // --- 脚本入口点 ---
