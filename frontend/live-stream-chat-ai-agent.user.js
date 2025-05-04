@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.3.2
+// @version      1.3.3
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (Bilibili, YouTube). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台（Bilibili, YouTube）自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台（Bilibili, YouTube）自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -43,6 +43,15 @@
             getRoomId: () => {
                 const match = window.location.pathname.match(/\/(\d+)/);
                 return match ? match[1] : null;
+            },
+
+            /**
+            * 提取 Bilibili 主播的用户名。
+            * @returns {string|null} 主播名称，若找不到则返回 null。
+            */
+            getStreamerName: function () {
+                const anchor = document.querySelector('#head-info-vm .room-owner-username');
+                return anchor ? anchor.getAttribute('title')?.trim() || anchor.textContent?.trim() : null;
             },
 
             /**
@@ -285,6 +294,15 @@
             })(),
 
             /**
+             * 提取 YouTube 主播的用户名。
+             * @returns {string|null} 主播名称，若找不到则返回 null。
+             */
+            getStreamerName: function () {
+                const channelElement = document.querySelector('#channel-name yt-formatted-string#text');
+                return channelElement ? channelElement.textContent?.trim() : null;
+            },
+
+            /**
              * 在页面上查找视频元素。(YouTube)
              * @returns {HTMLVideoElement|null} 视频元素或 null。
              */
@@ -480,6 +498,15 @@
                     return path.slice(1); // 去掉開頭的 '/'
                 }
                 return null;
+            },
+
+            /**
+             * 提取 Twitch 主播的用户名。
+             * @returns {string|null} 主播名称，若找不到则返回 null。
+             */
+            getStreamerName: function () {
+                const titleElement = document.querySelector('#live-channel-stream-information h1.tw-title');
+                return titleElement ? titleElement.textContent?.trim() : null;
             },
 
             /**
@@ -2148,6 +2175,12 @@
             console.log(`[Send Data] 实时聊天缓冲区已清理，移除 ${originalBufferSize - realtimeChatBuffer.length} 条旧消息。`);
         }
 
+        // --- 获取主播名字 ---
+        const streamerName = currentPlatformAdapter.getStreamerName?.() || null;
+        if (streamerName === null) {
+            console.warn('[Send Data] 没有成功获取当前 Streamer 用户名')
+        }
+
         // --- 3. 检查是否有有效数据发送 ---
         if ((!audioBlob || audioBlob.size === 0) && chatsForThisInterval.length === 0 && !screenshotBlob) {
             console.log("[Send Data] 没有有效数据（音频、过滤后的聊天、截图）需要发送。");
@@ -2188,7 +2221,7 @@
         isSending = true; // 设置发送锁
         const dataSize = finalAudioBlob ? finalAudioBlob.size : 0;
         const screenshotSize = screenshotBlob ? screenshotBlob.size : 0;
-        console.log(`[Send Data] 准备发送数据。音频: ${dataSize} bytes, 聊天: ${chatsForThisInterval.length}, 截图: ${screenshotSize} bytes.`);
+        console.log(`[Send Data] 准备发送数据。音频: ${dataSize} bytes, 聊天: ${chatsForThisInterval.length}, 截图: ${screenshotSize} bytes, 主播用户名: ${streamerName}`);
 
         const formData = new FormData();
         if (finalAudioBlob && finalAudioBlob.size > 0) {
@@ -2198,6 +2231,7 @@
         formData.append('chats', JSON.stringify(chatsForThisInterval));
         formData.append('roomId', roomId || 'unknown');
         formData.append('platform', currentPlatformAdapter.platformName);
+        formData.append('streamerName', streamerName || 'unknown')
 
         if (screenshotBlob && screenshotBlob.size > 0) {
             const timestampStr = new Date(currentRecordingEndTimestamp).toISOString().replace(/[:.]/g, "-"); // 使用结束时间
