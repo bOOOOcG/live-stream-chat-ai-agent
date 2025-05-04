@@ -50,6 +50,13 @@ from PIL import Image
 
 import logging
 
+# 设置根 logger 的日志级别
+logging.basicConfig(
+    level=logging.INFO,  # 显示 INFO、WARNING、ERROR、CRITICAL 日志
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
 # --- Load Environment Variables ---
 # Load .env file before doing anything else that might depend on it.
 print("Loading environment variables from .env file...")
@@ -424,28 +431,28 @@ class LiveAssistantServer:
     def _print_context_debug(self, context_messages: List[Dict[str, Any]], final_token_count: int):
         """Prints the final context being sent to the LLM for debugging."""
         print(f"\n📤 Final Context ({len(context_messages)} messages, ~{final_token_count} tokens) Sent to LLM:")
-        for i, msg in enumerate(context_messages):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            content_repr = ""
-            if isinstance(content, list): # Handle Vison API format
-                parts = []
-                for item in content:
-                    item_type = item.get("type")
-                    if item_type == "text":
-                        parts.append(f"Text: '{item.get('text', '')[:100]}...'")
-                    elif item_type == "image_url":
-                        url = item.get('image_url', {}).get('url', '')
-                        parts.append(f"Image: '{url[:50]}...'")
-                    else:
-                        parts.append(f"{str(item)[:100]}...")
-                content_repr = "[" + ", ".join(parts) + "]"
-            elif isinstance(content, str):
-                content_repr = f"'{content[:150]}...'"
-            else:
-                content_repr = f"{str(content)[:150]}..."
-            print(f"  [{i}] Role: {role:<9} Content: {content_repr}")
-        print("-" * 20)
+        # for i, msg in enumerate(context_messages):
+        #     role = msg.get("role", "unknown")
+        #     content = msg.get("content", "")
+        #     content_repr = ""
+        #     if isinstance(content, list): # Handle Vison API format
+        #         parts = []
+        #         for item in content:
+        #             item_type = item.get("type")
+        #             if item_type == "text":
+        #                 parts.append(f"Text: '{item.get('text', '')[:100]}...'")
+        #             elif item_type == "image_url":
+        #                 url = item.get('image_url', {}).get('url', '')
+        #                 parts.append(f"Image: '{url[:50]}...'")
+        #             else:
+        #                 parts.append(f"{str(item)[:100]}...")
+        #         content_repr = "[" + ", ".join(parts) + "]"
+        #     elif isinstance(content, str):
+        #         content_repr = f"'{content[:150]}...'"
+        #     else:
+        #         content_repr = f"{str(content)[:150]}..."
+        #     print(f"  [{i}] Role: {role:<9} Content: {content_repr}")
+        # print("-" * 20)
 
     # --- State Management Methods (Filesystem) ---
     def _get_memory_folder(self, room_id: str) -> Path:
@@ -956,6 +963,7 @@ class LiveAssistantServer:
 
     def _build_llm_prompt(self,
                           room_id: str,
+                          streamer_name: Optional[str],
                           current_chat_list: List[Dict[str, Any]],
                           stt_youdao: Optional[str],
                           stt_whisper: Optional[str],
@@ -969,6 +977,7 @@ class LiveAssistantServer:
 
         Args:
             room_id: 当前直播间的唯一标识符。
+            streamer_name: 主播的用户名。
             current_chat_list: 当前请求中包含的最新聊天/弹幕列表。
             stt_youdao: 有道语音识别服务返回的文本结果 (如果启用且成功)。
             stt_whisper: Whisper 语音识别服务返回的文本结果 (如果启用且成功)。
@@ -1015,16 +1024,19 @@ class LiveAssistantServer:
 
         # 3a. 添加当前时间戳
         current_time_str = datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
-        timestamp_text = f"【当前时间】\n{current_time_str}"
+        timestamp_text = f"[当前时间]\n{current_time_str}"
 
-        # 3b. 格式化聊天列表
+        # 3b. 添加主播用户名
+        streamer_name_text = f"[主播用户名]: \"{streamer_name}\""
+
+        # 3c. 格式化聊天列表
         # _load_chat_list_for_prompt 应负责加载、截断并格式化聊天列表，并返回带标签的字符串
         chatlist_text, _ = self._load_chat_list_for_prompt(current_chat_list)
         # 示例：chatlist_text 可能返回 "{Chatlist content:\nUser1: Hello\nUser2: Hi\n}"
 
-        # 3c. 格式化语音识别 (STT) 结果
+        # 3d. 格式化语音识别 (STT) 结果
         stt_text_parts = []
-        stt_label = "【主播语音输入】" # 主标签
+        stt_label = "[主播语音输入]" # 主标签
         provider_tag = "" # 用于记录最终使用的 provider
 
         # 根据配置和识别结果选择性地包含 STT 文本，并使用更友好的标签
@@ -1066,12 +1078,13 @@ class LiveAssistantServer:
         if self.enable_vision and image_url:
             # 这个引言文本用于提示 LLM 下方将附带图像信息
             # 注意：这部分文本的 Token 会被计算，但图像本身的 Token 成本复杂且未在此计入总估算
-            image_preamble_text = "【当前直播间画面信息】\n  (下方消息包含图片链接)"
+            image_preamble_text = "[当前直播间画面信息]\n  (下方消息包含图片链接)"
 
         # 3e. 组合当前回合的所有文本组件
         # 将时间戳、聊天列表、STT结果、图像引言组合成一个连贯的文本输入
         current_turn_text_components = [
             timestamp_text,
+            streamer_name_text, # 主播的用户名
             chatlist_text,      # 来自 _load_chat_list_for_prompt, 假设自带标签或格式
             stt_block_text,     # 构建好的 STT 文本块，自带标签
             image_preamble_text # 图像引言文本，自带标签
@@ -1383,6 +1396,7 @@ class LiveAssistantServer:
     # --- Main Request Processing Method ---
     def process_request(self,
                         room_id: str,
+                        streamer_name: Optional[str],
                         audio_file_path: Path,
                         screenshot_file_path: Optional[Path] = None,
                         chat_list: Optional[List[Dict]] = None
@@ -1398,6 +1412,9 @@ class LiveAssistantServer:
         if not room_id:
              print("Error: Missing room_id in request.")
              return {"status": "error", "message": "Missing room_id"}
+        if not streamer_name:
+             print("Error: Missing streamer_name in request.")
+             return {"status": "error", "message": "streamer_name"}
         if not audio_file_path or not audio_file_path.exists():
              print(f"Error: Invalid or missing audio file path: {audio_file_path}")
              return {"status": "error", "message": f"Invalid or missing audio file path"}
@@ -1445,7 +1462,7 @@ class LiveAssistantServer:
         # --- 3. Build LLM Prompt ---
         print("--- Step 3: Building LLM Prompt ---")
         context_to_send = self._build_llm_prompt(
-            room_id, chat_list, stt_youdao, stt_whisper, image_url
+            room_id, streamer_name, chat_list, stt_youdao, stt_whisper, image_url
             )
 
         # --- 4. Invoke LLM ---
@@ -1561,15 +1578,22 @@ def handle_upload():
             abort(400, description="Missing 'audio' file part in the request.")
         audio_file_storage = request.files['audio']
         if not audio_file_storage.filename:
-             print("Upload Error: Received audio file part with no filename.")
-             abort(400, description="Received audio file part with no filename.")
+            print("Upload Error: Received audio file part with no filename.")
+            abort(400, description="Received audio file part with no filename.")
 
         # Get mandatory room ID
         room_id_form = request.form.get('roomId')
         if not room_id_form or not room_id_form.strip():
-             print("Upload Error: 'roomId' form data missing or empty.")
-             abort(400, description="Missing or empty 'roomId' form data.")
+            print("Upload Error: 'roomId' form data missing or empty.")
+            abort(400, description="Missing or empty 'roomId' form data.")
         scoped_room_id = room_id_form.strip() # Use sanitized ID for logging
+
+        # Get streamer username
+        streamer_name = request.form.get('streamerName')
+        if not streamer_name or not streamer_name.strip():
+            print("Upload Warning: 'streamer_name' form data missing or empty.")
+            streamer_name = 'unknown'
+        scoped_streamer_name = streamer_name.strip() # Use sanitized ID for logging
 
         # --- Summary Debug Output ---
         try:
@@ -1585,6 +1609,7 @@ def handle_upload():
             chat_list_len = len(json.loads(chat_list_str)) if chat_list_str else 0
 
             print(f"[Upload Info] Room ID: {scoped_room_id}")
+            print(f"     streamer name: {scoped_streamer_name}")
             print(f"  📦 Audio: {audio_file_storage.filename} | {audio_size_kb:.1f} KB")
             print(f"  🖼️ Screenshot: {screenshot_file.filename if screenshot_file else 'None'} | {screenshot_size_kb:.1f} KB")
             print(f"  💬 chats: {chat_list_len} 条")
@@ -1634,6 +1659,7 @@ def handle_upload():
         # --- Delegate to Core Processing Logic ---
         result = live_server.process_request(
             room_id=scoped_room_id,
+            streamer_name=streamer_name,
             audio_file_path=temp_audio_path,
             screenshot_file_path=temp_screenshot_path, # Will be None if not found/enabled
             chat_list=chat_list
