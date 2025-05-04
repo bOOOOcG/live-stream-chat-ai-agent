@@ -48,6 +48,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from PIL import Image
 
+import logging
+
 # --- Load Environment Variables ---
 # Load .env file before doing anything else that might depend on it.
 print("Loading environment variables from .env file...")
@@ -553,11 +555,23 @@ class LiveAssistantServer:
         else:
             return "", 0
 
-    def _load_trimmed_context_history(self, room_id: str, reserved_tokens: int) -> List[Dict[str, Any]]:
+    def _load_trimmed_context_history(self, 
+                                      room_id: str, 
+                                      reserved_tokens_for_current_input: int,
+                                      tokens_notepad_system: int # 新增参数
+                                      ) -> List[Dict[str, Any]]:
         """
-        Loads historical context, trimming older messages to fit the available token budget
-        (max_total - system_prompt - reserved_for_current_input).
-        Excludes the system prompt itself.
+        Loads historical context, trimming older messages to fit the available token budget.
+        The budget accounts for the main system prompt, the notepad system message, 
+        and the space reserved for the current input. Excludes system prompts themselves during trimming.
+        
+        Args:
+            room_id: The ID of the room.
+            reserved_tokens_for_current_input: Tokens reserved for the current user message (text + buffer).
+            tokens_notepad_system: Tokens consumed by the separate notepad system message.
+            
+        Returns:
+            A list of historical user/assistant messages fitting the budget.
         """
         file_path = self._get_context_file_path(room_id)
         if not file_path.exists():
@@ -567,20 +581,18 @@ class LiveAssistantServer:
             with file_path.open('r', encoding='utf-8') as f:
                 # Load the full history including system prompt etc.
                 full_context_history = json.load(f)
-                # Filter out system prompt here before trimming
+                # Filter out ALL system prompts here before trimming
                 history_to_trim = [msg for msg in full_context_history if msg.get("role") != "system"]
         except Exception as e:
             print(f"Error loading or parsing context file for room {room_id}: {e}. Starting with fresh context.")
-            # Attempt to delete corrupted file? Maybe too risky.
-            # try:
-            #     file_path.unlink()
-            # except OSError: pass
             return []
 
-        # Calculate the token budget specifically for historical messages
-        token_budget = self.max_total_tokens - self.system_prompt_tokens - reserved_tokens
+        # --- 修改预算计算 ---
+        # Budget = Max Total - MainSystem - NotepadSystem - ReservedForCurrentInput
+        token_budget = self.max_total_tokens - self.system_prompt_tokens - tokens_notepad_system - reserved_tokens_for_current_input
+        
         if token_budget <= 0:
-            print("Warning: No token budget remaining for history after system prompt and reserved space.")
+            print(f"Warning: No token budget remaining for history (Budget: {token_budget}). Max: {self.max_total_tokens}, MainSys: {self.system_prompt_tokens}, NotepadSys: {tokens_notepad_system}, Reserved: {reserved_tokens_for_current_input}")
             return []
 
         trimmed_history = []
@@ -593,12 +605,10 @@ class LiveAssistantServer:
 
             msg_tokens = 0
             content = msg.get("content")
-            if isinstance(content, list): # Handle vision messages in history
+            if isinstance(content, list): # Handle vision messages in history (count text only as requested)
                 msg_tokens = sum(self._calculate_tokens(item.get("text", ""))
                                  for item in content if item.get("type") == "text")
-                # Note: Image tokens are not accurately calculated here. This assumes text dominates.
-                # Add a heuristic cost per image if necessary:
-                # msg_tokens += sum(150 for item in content if item.get("type") == "image_url")
+                # >>> important: We are IGNORING image tokens in history as requested <<<
             elif isinstance(content, str):
                 msg_tokens = self._calculate_tokens(content)
 
@@ -608,9 +618,12 @@ class LiveAssistantServer:
                 trimmed_history.insert(0, msg) # Add to beginning to maintain order
                 current_tokens += msg_tokens
             else:
+                # Print message indicating why trimming stopped
+                # print(f"History trimming stopped: Adding message ({msg_tokens} tokens) would exceed budget ({current_tokens}/{token_budget}). Message content: {str(content)[:50]}...")
                 break # Stop when budget is full
 
-        print(f"📦 Loaded context history for room {room_id}: {len(trimmed_history)} messages, ~{current_tokens} tokens (Budget: {token_budget})")
+        # 在函数退出前打印加载结果，方便调试
+        print(f"📦 Loaded context history for room {room_id}: {len(trimmed_history)} messages, ~{current_tokens} tokens (Budget for history: {token_budget})")
         return trimmed_history
 
     def _save_context(self, room_id: str, full_context_data: List[Dict[str, Any]]):
@@ -947,72 +960,254 @@ class LiveAssistantServer:
                           stt_youdao: Optional[str],
                           stt_whisper: Optional[str],
                           image_url: Optional[str]) -> List[Dict[str, Any]]:
-        """Constructs the list of messages to be sent to the LLM API, combining textual inputs."""
+        """
+        构建将要发送给 LLM API 的消息列表。
 
-        # 1. Load notepad once as a system message (moved out of user content)
+        该函数负责整合各种输入源（系统指令、房间笔记、历史对话、当前聊天、
+        语音识别结果、图像信息），为当前用户回合构建结构化的文本输入，
+        并计算各部分的 Token 数量（主要是文本部分）用于调试和上下文管理。
+
+        Args:
+            room_id: 当前直播间的唯一标识符。
+            current_chat_list: 当前请求中包含的最新聊天/弹幕列表。
+            stt_youdao: 有道语音识别服务返回的文本结果 (如果启用且成功)。
+            stt_whisper: Whisper 语音识别服务返回的文本结果 (如果启用且成功)。
+            image_url: 上传到图像服务器后的图像 URL (如果启用视觉且成功)。
+
+        Returns:
+            一个包含多条消息字典的列表，可以直接传递给 LLM API 的 `messages` 参数。
+            每个消息字典包含 'role' 和 'content' 键。
+        """
+        logger = logging.getLogger(__name__) # 获取 logger 实例 (推荐)
+
+        # --- Token 计数器初始化 ---
+        # 用于追踪构建过程中各部分文本内容的 Token 消耗，以进行精确的预算管理
+        tokens_main_system = 0      # 主系统提示的 Token
+        tokens_notepad_system = 0   # 笔记专用系统消息的 Token
+        tokens_history = 0          # 历史对话消息的 Token
+        tokens_current_user_text = 0 # 当前用户回合生成的文本内容的 Token
+
+        # --- 1. 计算主系统提示的 Token ---
+        # 根据配置加载的主系统提示 ('standard' 模式) 计算其 Token 消耗。
+        # 注意: 'user_message_compatibility' 模式下，系统提示作为第一条用户消息，
+        # 其 Token 会包含在 history 或 initial message 中，不应在这里重复计算。
+        if self.system_prompt_mode == 'standard':
+            # self.system_prompt_tokens 应在 _setup_system_prompt 中预先计算好
+             tokens_main_system = self.system_prompt_tokens
+             # 或者，如果 self.system_prompt_message_for_api 已准备好，可实时计算：
+             # tokens_main_system = sum(self._calculate_tokens(msg.get("content", ""))
+             #                        for msg in self.system_prompt_message_for_api
+             #                        if isinstance(msg.get("content"), str))
+        # TODO: 确认并确保 user_message_compatibility 模式下涉及的 system prompt Token
+        #       在其他地方（如历史加载预算）被正确考虑。
+
+        # --- 2. 加载房间笔记并计算其专属系统消息的 Token ---
+        # 笔记作为一种持久化记忆，通过一个特定的 system role 消息注入，提醒 LLM 关键信息。
         notepad_prompt_str, _ = self._load_notepad_for_prompt(room_id)
-        # ensure notepad is the first system message
-        system_notepad_message = {"role": "system", "content": f"以下是你记录的该直播间的笔记 记得多做笔记 因为你的记忆很短 只能靠记笔记维持记忆: {notepad_prompt_str}"}
+        # 构建笔记的系统消息内容
+        notepad_system_content = f"以下是你记录的该直播间的笔记 记得多做笔记 因为你的记忆很短 只能靠记笔记维持记忆: {notepad_prompt_str}"
+        system_notepad_message = {"role": "system", "content": notepad_system_content}
+        # 计算这条特定笔记系统消息的 Token
+        tokens_notepad_system = self._calculate_tokens(notepad_system_content)
 
-        # 2. Format chat list for prompt, getting its token count
-        chatlist_prompt_str, _ = self._load_chat_list_for_prompt(current_chat_list)
+        # --- 3. 格式化当前用户回合的输入信息 (时间戳、聊天、STT、图像引言) ---
+        # 将当前回合的所有动态信息整合成结构化的文本。
 
-        # 3. Prepare current STT input and image input text preamble
+        # 3a. 添加当前时间戳
+        current_time_str = datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
+        timestamp_text = f"【当前时间】\n{current_time_str}"
+
+        # 3b. 格式化聊天列表
+        # _load_chat_list_for_prompt 应负责加载、截断并格式化聊天列表，并返回带标签的字符串
+        chatlist_text, _ = self._load_chat_list_for_prompt(current_chat_list)
+        # 示例：chatlist_text 可能返回 "{Chatlist content:\nUser1: Hello\nUser2: Hi\n}"
+
+        # 3c. 格式化语音识别 (STT) 结果
         stt_text_parts = []
+        stt_label = "【主播语音输入】" # 主标签
+        provider_tag = "" # 用于记录最终使用的 provider
+
+        # 根据配置和识别结果选择性地包含 STT 文本，并使用更友好的标签
         if self.stt_provider == 'both':
-            if stt_youdao: stt_text_parts.append(f"{{Speech2text youdao: {stt_youdao}}}")
-            if stt_whisper: stt_text_parts.append(f"{{Speech2text whisper: {stt_whisper}}}")
+            if stt_youdao:
+                stt_text_parts.append(f"  (有道识别): {stt_youdao}")
+                provider_tag = "有道"
+            if stt_whisper:
+                stt_text_parts.append(f"  (Whisper识别): {stt_whisper}")
+                provider_tag = "Whisper" if not provider_tag else "两者" # 如果两者都有，标记为两者
         elif self.stt_provider == 'whisper':
-            if stt_whisper: stt_text_parts.append(f"{{Speech2text whisper: {stt_whisper}}}")
-            elif stt_youdao: stt_text_parts.append(f"{{Speech2text youdao: {stt_youdao}}}")
-        else:
-            if stt_youdao: stt_text_parts.append(f"{{Speech2text youdao: {stt_youdao}}}")
-            elif stt_whisper: stt_text_parts.append(f"{{Speech2text whisper: {stt_whisper}}}")
+            # 优先使用 Whisper，若失败则回退到 Youdao
+            if stt_whisper:
+                stt_text_parts.append(f"  (Whisper识别): {stt_whisper}")
+                provider_tag = "Whisper"
+            elif stt_youdao: # Fallback
+                stt_text_parts.append(f"  (有道识别 - 备用): {stt_youdao}")
+                provider_tag = "有道(备用)"
+        else: # 默认为 'youdao' 或仅配置了 'youdao'
+            # 优先使用 Youdao，若失败则回退到 Whisper
+            if stt_youdao:
+                stt_text_parts.append(f"  (有道识别): {stt_youdao}")
+                provider_tag = "有道"
+            elif stt_whisper: # Fallback
+                stt_text_parts.append(f"  (Whisper识别 - 备用): {stt_whisper}")
+                provider_tag = "Whisper(备用)"
 
-        if not stt_text_parts and (self.use_youdao_stt or self.use_whisper_stt):
-            stt_prompt_str = "{Speech2text info: No speech detected or STT failed}"
-        else:
-            stt_prompt_str = "\n".join(stt_text_parts)
+        stt_block_text = "" # 初始化 STT 块文本
+        if stt_text_parts:
+             # 如果有识别结果，构建带标签的文本块
+             stt_block_text = f"{stt_label}\n" + "\n".join(stt_text_parts)
+        elif (self.use_youdao_stt or self.use_whisper_stt):
+             # 如果 STT 功能已开启，但本次没有识别结果
+             stt_block_text = f"{stt_label}\n  (无语音输入或识别失败)"
+        # else: # 如果 STT 功能未开启，stt_block_text 保持为空字符串
 
+        # 3d. 格式化图像信息的文本引言 (仅当视觉功能启用且有图像时)
         image_preamble_text = ""
         if self.enable_vision and image_url:
-            image_preamble_text = "\n下面是当前直播间图片: "
-        # --- Combine all text components for this turn ---
-        current_turn_text_components = []
-        if chatlist_prompt_str:
-            current_turn_text_components.append(chatlist_prompt_str)
-        if stt_prompt_str:
-            current_turn_text_components.append(stt_prompt_str)
-        if image_preamble_text:
-            current_turn_text_components.append(image_preamble_text)
+            # 这个引言文本用于提示 LLM 下方将附带图像信息
+            # 注意：这部分文本的 Token 会被计算，但图像本身的 Token 成本复杂且未在此计入总估算
+            image_preamble_text = "【当前直播间画面信息】\n  (下方消息包含图片链接)"
 
-        combined_text_for_turn = "\n".join(current_turn_text_components).strip()
+        # 3e. 组合当前回合的所有文本组件
+        # 将时间戳、聊天列表、STT结果、图像引言组合成一个连贯的文本输入
+        current_turn_text_components = [
+            timestamp_text,
+            chatlist_text,      # 来自 _load_chat_list_for_prompt, 假设自带标签或格式
+            stt_block_text,     # 构建好的 STT 文本块，自带标签
+            image_preamble_text # 图像引言文本，自带标签
+        ]
 
-        # 4. Calculate reserved tokens and load history
-        reserved_tokens = self._calculate_tokens(combined_text_for_turn) + 50
-        history_messages = self._load_trimmed_context_history(room_id, reserved_tokens)
+        # 使用双换行符分隔主要信息块，以提高可读性
+        # filter(None, ...) 会移除列表中的空字符串，防止产生多余的换行符
+        combined_text_for_turn = "\n\n".join(filter(None, current_turn_text_components)).strip()
 
-        # 5. Assemble the final list of messages for the API
+        # --- 4. 计算当前用户输入文本的 Token 及所需的预留空间 ---
+        # 计算上面组合好的 `combined_text_for_turn` 的 Token 数量
+        tokens_current_user_text = self._calculate_tokens(combined_text_for_turn)
+
+        # 定义一个缓冲区 Token 数量，为 LLM 的响应或其他动态变化预留空间
+        # 这个值可以从环境变量配置，例如: PROMPT_RESERVED_BUFFER_TOKENS
+        reserved_buffer = get_env_int('PROMPT_RESERVED_BUFFER_TOKENS', 50) # 从 env 获取，默认 50
+
+        # 如果启用了视觉功能且有图像，需要特别注意图像的 Token 成本
+        # 这里仅是文本 Token 估算，图像成本很高，可能需要大幅增加 buffer 或进行估算
+        # if self.enable_vision and image_url:
+        #      # 图像 Token 成本通常较高 (e.g., 数百到上千 tokens)
+        #      # 这里的 buffer 可能不足以覆盖，需要考虑增大或实现图像 token 估算
+        #      vision_extra_buffer = get_env_int('VISION_EXTRA_BUFFER_TOKENS', 800) # 示例: 为vision增加额外buffer
+        #      reserved_buffer += vision_extra_buffer
+        #      logger.warning(f"视觉功能启用，已增加 {vision_extra_buffer} Token 到预留 Buffer (总 Buffer: {reserved_buffer}). "
+        #                    f"注意：这仍是估算，实际图像 Token 成本可能更高。")
+
+        # 计算加载历史记录时需要为当前输入预留的总 Token 空间
+        reserved_tokens_for_current_input = tokens_current_user_text + reserved_buffer
+
+        # --- 5. 加载裁剪后的历史对话记录 ---
+        # 调用历史记录加载函数，传入必要的预算信息，确保加载的历史记录
+        # 加上系统提示、笔记、当前输入后，不超过总 Token 限制。
+        logger.info(f"为当前输入(含Buffer)预留 {reserved_tokens_for_current_input} tokens, 为Notepad系统消息预留 {tokens_notepad_system} tokens。")
+        history_messages = self._load_trimmed_context_history(
+            room_id,
+            reserved_tokens_for_current_input, # 传入为当前输入（文本+Buffer）计算的预留值
+            tokens_notepad_system              # !! 传入笔记系统消息的 Token 成本
+        )
+        # _load_trimmed_context_history 内部会使用这些值来计算历史记录可用的精确 Token 预算:
+        # history_budget = max_total_tokens - main_system_tokens - notepad_system_tokens - reserved_for_current_input
+
+        # --- 6. 计算加载到的历史记录的 Token ---
+        # 遍历返回的、裁剪后的历史消息，累加其文本内容的 Token。
+        # 重要：根据设计要求，这里忽略历史消息中可能存在的图像内容的 Token 成本。
+        tokens_history = 0
+        for msg in history_messages:
+            content = msg.get("content")
+            if isinstance(content, str):
+                # 标准文本消息
+                tokens_history += self._calculate_tokens(content)
+            elif isinstance(content, list):
+                # 处理多模态消息 (通常是带图像的历史记录)
+                for item in content:
+                    # 只计算文本部分的 Token
+                    if item.get("type") == "text":
+                        tokens_history += self._calculate_tokens(item.get("text", ""))
+            # >>> 注意：历史图像的 Token 成本在此被忽略 <<<
+
+        # --- 7. 计算各项 Token 小计和总计 (文本估算) ---
+        tokens_conversation_context = tokens_history + tokens_current_user_text
+        tokens_total_estimated_text = tokens_main_system + tokens_notepad_system + tokens_history + tokens_current_user_text
+        # ^^^ 变量名明确指出这是文本 Token 的估算值
+
+        # --- 8. 打印详细的 Token 消耗调试信息 ---
+        # 使用 logger 输出，便于问题排查和性能分析
+        logger.info("\n--- 📊 LLM Prompt Token Breakdown (Text Estimate) ---")
+        logger.info(f"  [1] Main System Prompt:      {tokens_main_system:>5} tokens")
+        logger.info(f"  [2] Notepad System Message:  {tokens_notepad_system:>5} tokens")
+        logger.info(f"  [3] History Messages:        {tokens_history:>5} tokens ({len(history_messages)} messages)")
+        logger.info(f"  [4] Current User Input Text: {tokens_current_user_text:>5} tokens (Incl. Time, Labels etc.)")
+        logger.info(f"  ---")
+        logger.info(f"  Subtotal (History + Current):{tokens_conversation_context:>5} tokens ([3] + [4])")
+        logger.info(f"  ---")
+        logger.info(f"  >>> Est. TEXT Tokens Sent:   {tokens_total_estimated_text:>5} tokens ([1] + [2] + [3] + [4])")
+        if image_url and self.enable_vision:
+            logger.warning(f"  !!! 视觉启用且包含图片 URL，但其 Token 成本未计入上述估算 !!!")
+        logger.info(f"  Configured Max Total:        {self.max_total_tokens:>5} tokens")
+        # 计算基于文本估算的剩余空间
+        token_diff = self.max_total_tokens - tokens_total_estimated_text
+        status = "OK (Text Only)" if token_diff >= 0 else "OVER BUDGET (Based on Text!)"
+        # 如果启用了视觉，对剩余空间做更保守的判断
+        if image_url and self.enable_vision and token_diff < (reserved_buffer - 50): # 检查是否接近或超出（减去基础buffer）
+             status += " - Risk of Image Exceeding Context!"
+        logger.info(f"  Remaining Budget / Overrun:  {token_diff:>+5} tokens ({status})")
+        logger.info(f"  (Note: Reserved buffer for current input: {reserved_buffer} tokens)")
+        logger.info("------------------------------------------------")
+
+        # --- 9. 组装最终发送给 LLM API 的消息列表 ---
         final_messages = []
-        # insert notepad system message before other system prompts
+
+        # 9a. 添加主系统提示消息 (如果适用 'standard' 模式)
+        # self.system_prompt_message_for_api 在 'standard' 模式下包含系统提示，
+        # 在 'user_message_compatibility' 模式下为空列表。
         final_messages.extend(self.system_prompt_message_for_api)
+
+        # 9b. 添加笔记系统消息
         final_messages.append(system_notepad_message)
+
+        # 9c. 添加裁剪后的历史对话消息
         final_messages.extend(history_messages)
-        
-        # Construct the current user message
+
+        # 9d. 构建并添加当前用户回合的消息
+        # 这一回合的消息可能包含文本和图像两部分
         if combined_text_for_turn or (self.enable_vision and image_url):
-            content_list = []
+            content_list = [] # 用于存储用户消息的 content 部分 (列表形式)
+
+            # 如果有文本内容，添加到 content_list
             if combined_text_for_turn:
-                content_list.append({"type": "text", "text": combined_text_for_turn})
+                content_list.append({
+                    "type": "text",
+                    "text": combined_text_for_turn
+                })
+
+            # 如果启用了视觉且有图像 URL，添加到 content_list
             if self.enable_vision and image_url:
+                # 图像部分的 Token 成本由 LLM API 计算，这里只传递 URL
                 content_list.append({
                     "type": "image_url",
                     "image_url": {"url": image_url}
                 })
-            final_messages.append({"role": "user", "content": content_list})
-        else:
-            print("Warning: No new user inputs; sending context only.")
 
+            # 只有当 content_list 非空时，才添加这条 user 消息
+            # (理论上，如果进入这个 if 分支，content_list 应该至少有一项)
+            if content_list:
+                final_messages.append({"role": "user", "content": content_list})
+
+        else:
+            # 处理没有新的用户输入的情况 (例如 STT 失败且聊天列表为空)
+            logger.warning("当前回合没有新的文本或图像输入，主要发送历史和系统/笔记信息。")
+            # 可以在这里考虑是否添加一条提示性的用户消息，例如：
+            # final_messages.append({"role": "user", "content": [{"type": "text", "text": "(无新内容，请继续)"}]})
+            # 如果添加，需要注意其对 Token 预算的微小影响，或接受这个误差。
+            # 当前实现：不添加额外的用户消息，让 LLM 基于历史和系统提示进行响应。
+
+        # --- 10. 返回最终构建好的消息列表 ---
         return final_messages
 
     def _invoke_llm(self, context_messages: List[Dict[str, Any]], room_id:str = "N/A") -> Optional[str]:
