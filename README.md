@@ -2,11 +2,11 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
 
+|[ENGLISH README](README.md) |[中文README](README.zh-CN.md)|
+
 An AI-powered agent designed to watch live streams, understand the content (audio, chat, video), and participate in the chat automatically using a Large Language Model (LLM).
 
 ![Control Panel](docs/panel_example.png)
-
-[中文README](README.zh-CN.md)
 
 ## Overview
 
