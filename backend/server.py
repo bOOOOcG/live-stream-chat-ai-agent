@@ -43,12 +43,17 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 import tiktoken
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 from datetime import datetime
 from dotenv import load_dotenv
 from PIL import Image
 
+import atexit
+
 import logging
+
+# 获取日志记录器实例 (假设已在别处配置)
+logger = logging.getLogger(__name__)
 
 # 设置根 logger 的日志级别
 logging.basicConfig(
@@ -145,6 +150,32 @@ DEFAULT_SYSTEM_PROMPT = (
     # The preamble for the image is now added dynamically in _build_llm_prompt
 )
 
+NOTEPAD_OPTIMIZATION_PROMPT_TEMPLATE = """
+你是一位 AI 助手，正在帮助另一位 AI 代理管理其存储在记事本中的长期记忆。
+**背景信息：** 前面的系统消息中提供了你正在为其优化笔记的 AI 代理的人设和核心规则 相当于你在操作的就是这个AI的全部记忆。请在优化时参考这些规则，确保关键指令和个性化信息得到保留。
+
+你的任务是优化和精简以下来自特定直播间记事本文件的用户笔记。
+
+**优化指南：**
+
+1.  **压缩与合并：** 将相关的笔记或信息合并成更简洁的要点。
+2.  **区分优先级：** 重点保留关键信息，特别是那些与前面提供的人设/规则直接相关的内容：
+    *   明确给到目标 AI 的指令或规则（例如，如何回应、特定的用户昵称、语速限制等）。**这些非常重要，通常应予以保留。**
+    *   关于主播或常驻用户的关键事实（偏好、提到的重要事件）。
+    *   目标 AI 过去的重要互动或做出的承诺。
+3.  **精炼语言：** 在不丢失核心含义的前提下，尽可能缩短句子并提高清晰度。如果意外记录了对话中的填充词，请移除。
+4.  **移除冗余：** 删除重复的信息。
+5.  **移除次要细节：** 识别并可能移除关于非常琐碎或可能已过时信息的笔记（例如，来自过去的某个单一时刻的临时观察，除非它们形成了一种模式）。运用你的判断力——如果不确定，倾向于保留，但尝试压缩它。
+6.  **保持格式：** 将优化后的笔记输出为纯文本，每个不同的要点占一行。不要在最终输出中添加任何额外的解释、问候或 JSON 格式。只需提供用于新记事本内容的、清理过的文本行即可。
+
+**输入记事本内容：**
+--- START NOTES ---
+{original_notes}
+--- END NOTES ---
+
+**优化后的记事本内容输出（仅包含最终的文本行，每行一个笔记）：**
+"""
+
 # --- LiveAssistantServer Class ---
 class LiveAssistantServer:
     """
@@ -169,6 +200,16 @@ class LiveAssistantServer:
 
         # Load all configurations from environment variables
         self._load_configuration()
+
+        # Initialize thread pool for background tasks (like notepad optimization)
+        # 初始化用于后台任务（如Notepad优化）的线程池
+        # max_workers 可以根据需要调整，一般 2-4 个足够处理优化任务
+        self.optimization_executor = ThreadPoolExecutor(max_workers=int(os.getenv("OPTIMIZATION_WORKERS", 2)), thread_name_prefix='Optimizer_')
+        # Set to keep track of rooms currently undergoing optimization
+        # 用于跟踪当前正在进行优化的房间的集合
+        self.optimizing_rooms = set()
+        # self.optimizing_room_lock = Lock() # 如果使用 Lock 替代 set
+        print(f"Background optimization executor initialized (Workers: {self.optimization_executor._max_workers}).")
 
         # Override test mode if command-line flag is set
         if self.cli_args.test:
@@ -224,13 +265,22 @@ class LiveAssistantServer:
         self.llm_tokenizer_model = get_env_str('LLM_TOKENIZER_MODEL', self.llm_api_model) # Default to API model
         self.max_llm_response_tokens = get_env_int('LLM_MAX_RESPONSE_TOKENS', 2000)
         self.api_timeout_seconds = get_env_int('LLM_API_TIMEOUT_SECONDS', 60)
-        print(f"LLM Config: API_Model='{self.llm_api_model}', Tokenizer='{self.llm_tokenizer_model}', MaxRespTokens={self.max_llm_response_tokens}, Timeout={self.api_timeout_seconds}s")
+        self.llm_optimize_timeout_seconds = int(os.getenv("LLM_OPTIMIZE_TIMEOUT_SECONDS", 180))
+        print(f"LLM Config: API_Model='{self.llm_api_model}', Tokenizer='{self.llm_tokenizer_model}', MaxRespTokens={self.max_llm_response_tokens}, Timeout={self.api_timeout_seconds}s, OptimizeTimeout={self.llm_optimize_timeout_seconds}s")
 
         # Token Limits
         self.max_total_tokens = get_env_int('PROMPT_MAX_TOTAL_TOKENS', 4096)
         self.max_notepad_tokens_in_prompt = get_env_int('PROMPT_MAX_NOTEPAD_TOKENS', 712)
         self.max_chatlist_tokens_in_prompt = get_env_int('PROMPT_MAX_CHATLIST_TOKENS', 256)
-        print(f"Token Limits: TotalPrompt={self.max_total_tokens}, NotepadInPrompt={self.max_notepad_tokens_in_prompt}, ChatlistInPrompt={self.max_chatlist_tokens_in_prompt}")
+        self.llm_max_optimize_resp_tokens = int(os.getenv('LLM_MAX_OPTIMIZE_RESP_TOKENS', '4096'))
+        print(f"Token Limits: TotalPrompt={self.max_total_tokens}, NotepadInPrompt={self.max_notepad_tokens_in_prompt}, ChatlistInPrompt={self.max_chatlist_tokens_in_prompt}, OptimizeRespTokens={self.llm_max_optimize_resp_tokens}")
+
+        # Notepad Auto Optimization Config
+        self.notepad_auto_optimize_enabled = get_env_bool('NOTEPAD_AUTO_OPTIMIZE_ENABLE', False)
+        self.notepad_auto_optimize_threshold_tokens = get_env_int('NOTEPAD_AUTO_OPTIMIZE_THRESHOLD_TOKENS', 2500) # Example threshold
+        print(f"Notepad Auto-Optimize: Enabled={self.notepad_auto_optimize_enabled}, Threshold={self.notepad_auto_optimize_threshold_tokens} tokens")
+        if self.notepad_auto_optimize_enabled and self.notepad_auto_optimize_threshold_tokens <= self.max_notepad_tokens_in_prompt:
+            print(f"Warning: NOTEPAD_AUTO_OPTIMIZE_THRESHOLD_TOKENS ({self.notepad_auto_optimize_threshold_tokens}) should generally be larger than PROMPT_MAX_NOTEPAD_TOKENS ({self.max_notepad_tokens_in_prompt}) to avoid frequent optimizations.")
 
         # STT Config
         self.stt_provider = get_env_str('STT_PROVIDER', 'whisper').lower()
@@ -512,6 +562,28 @@ class LiveAssistantServer:
             total_tokens = 0
 
         return notepad_content, total_tokens
+    
+    def _get_notepad_total_tokens(self, room_id: str) -> int:
+        """
+        Reads the entire notepad file for a room and calculates its total token count.
+        读取指定房间的整个 Notepad 文件并计算其总 Token 数量。
+
+        Returns:
+            int: The total token count, or 0 if the file doesn't exist or is empty/unreadable.
+                 总 Token 数，如果文件不存在、为空或不可读则返回 0。
+        """
+        file_path = self._get_notepad_file_path(room_id)
+        if not file_path.exists():
+            return 0
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            if not content.strip():
+                return 0
+            return self._calculate_tokens(content)
+        except Exception as e:
+            print(f"Error reading or calculating tokens for full notepad (room {room_id}): {e}")
+            return 0 # Return 0 on error to avoid triggering optimization incorrectly
 
     def _append_to_notepad(self, room_id: str, new_notes: List[str]):
         """Appends new notes to the room's notepad file."""
@@ -526,6 +598,153 @@ class LiveAssistantServer:
                         f.write(note.strip() + "\n")
         except Exception as e:
              print(f"Error appending to notepad for room {room_id}: {e}")
+
+    def optimize_notepad(self, room_id: str) -> Dict[str, Any]:
+        """
+        使用 LLM 优化指定 room 的记事本内容，并直接覆盖文件（含备份）。
+        返回一个 dict，包含 status、message、optimized_content_preview、processing_time_seconds。
+        """
+        start = time.monotonic()
+        notepad_path = self._get_notepad_file_path(room_id)
+
+        if not notepad_path.exists():
+            return {"status": "error", "message": "Notepad file not found."}
+
+        # 读取原始内容
+        try:
+            original = notepad_path.read_text(encoding='utf-8')
+            if not original.strip():
+                return {"status": "success", "message": "Notepad was empty, skipped."}
+        except Exception as e:
+            return {"status": "error", "message": f"Error reading notepad: {e}"}
+
+        # 构建优化提示
+        sys_prompt = self.system_prompt_content or ""
+        prompt = NOTEPAD_OPTIMIZATION_PROMPT_TEMPLATE.format(original_notes=original)
+        msgs = []
+        if sys_prompt:
+            msgs.append({"role":"system","content":
+                         f"You are optimizing notes for an AI assistant. Persona:\n---\n{sys_prompt}\n---"})
+        msgs.append({"role":"user","content": prompt})
+
+        # 调用 LLM
+        optimized = self._invoke_llm(
+            msgs,
+            room_id=room_id,
+            max_tokens_override=self.llm_max_optimize_resp_tokens
+        )
+        if optimized is None:
+            return {"status": "error", "message": "LLM generation failed."}
+
+        optimized = optimized.strip()
+        # 备份并写回
+        backup = notepad_path.with_suffix(f'.bak.{time.strftime("%Y%m%d%H%M%S")}')
+        shutil.copy2(notepad_path, backup)
+        notepad_path.write_text(optimized, encoding='utf-8')
+
+        elapsed = time.monotonic() - start
+        preview = optimized[:200] + ("..." if len(optimized)>200 else "")
+        return {
+            "status": "success",
+            "message": f"Optimized notepad for room {room_id}.",
+            "optimized_content_preview": preview,
+            "processing_time_seconds": round(elapsed,2)
+        }
+    
+    def _run_notepad_optimization(self, room_id: str) -> str:
+        """
+        Worker function executed in the background thread to optimize notepad.
+        在后台线程中执行的 Notepad 优化工作函数。
+
+        Logs results and handles exceptions. Always returns the room_id for cleanup.
+        记录结果并处理异常。始终返回 room_id 以便清理。
+
+        Args:
+            room_id: The ID of the room whose notepad needs optimization.
+                     需要优化 Notepad 的房间 ID。
+
+        Returns:
+            str: The room_id that was processed.
+                 处理过的 room_id。
+        """
+        scoped_logger = logging.getLogger(__name__).getChild(f"Optimizer(Room:{room_id})")
+        scoped_logger.info(f"Starting background notepad optimization...")
+        start_time = time.monotonic()
+        try:
+            # Call the existing optimization logic
+            # 调用现有的优化逻辑
+            result = self.optimize_notepad(room_id)
+            duration = time.monotonic() - start_time
+            status = result.get('status', 'unknown')
+            message = result.get('message', 'No message returned.')
+            scoped_logger.info(f"Optimization finished in {duration:.2f}s. Status: {status}. Message: {message}")
+        except Exception as e:
+            duration = time.monotonic() - start_time
+            scoped_logger.error(f"EXCEPTION during background notepad optimization after {duration:.2f}s: {e}")
+            scoped_logger.error(traceback.format_exc())
+        finally:
+            # Crucial: Always return the room_id so the callback knows which room finished.
+            # 关键：始终返回 room_id，以便回调函数知道哪个房间完成了。
+            return room_id
+
+    def _optimization_task_done(self, future: Future):
+        """
+        Callback function executed when a notepad optimization task completes (success or failure).
+        当 Notepad 优化任务完成（成功或失败）时执行的回调函数。
+
+        Removes the room_id from the `optimizing_rooms` set to allow future optimizations.
+        从 `optimizing_rooms` 集合中移除 room_id，以允许未来的优化。
+
+        Args:
+            future: The Future object representing the completed task.
+                    代表已完成任务的 Future 对象。
+        """
+        room_id = None
+        try:
+            # Get the room_id returned by _run_notepad_optimization
+            # 获取 _run_notepad_optimization 返回的 room_id
+            room_id = future.result() # This might re-raise exceptions caught *within* optimize_notepad if not handled there
+
+            # Log if the task itself raised an exception *not* caught internally
+            # 如果任务本身抛出了未在内部捕获的异常，则记录日志
+            exc = future.exception()
+            if exc:
+                 # Logged inside _run_notepad_optimization already, but good to confirm here.
+                 logger.error(f"[Optimizer Callback Room {room_id or 'Unknown'}] Task indicated failure with exception: {exc}")
+
+            # Optional: Log successful completion indication from callback side
+            # logger.info(f"[Optimizer Callback Room {room_id or 'Unknown'}] Task completed processing.")
+
+        except Exception as e:
+            # Catch errors during future.result() or future.exception() calls
+            # 捕获调用 future.result() 或 future.exception() 期间的错误
+            # We might not know the room_id if future.result() failed badly
+            logger.error(f"[Optimizer Callback Room {room_id or 'Unknown'}] Error in optimization 'done' callback itself: {e}")
+        finally:
+            # --- CRITICAL SECTION ---
+            # Ensure the room is removed from the tracking set, regardless of task success/failure.
+            # 无论任务成功与否，确保从跟踪集合中移除该房间。
+             # --- 使用集合进行并发控制 ---
+            if room_id and room_id in self.optimizing_rooms:
+                try:
+                    self.optimizing_rooms.remove(room_id)
+                    logger.info(f"[Optimizer Callback Room {room_id}] Optimization lock released.")
+                except KeyError:
+                     # Should not happen if logic is correct, but good to log defensively
+                     logger.warning(f"[Optimizer Callback Room {room_id}] Tried to release lock, but room was not found in the set. (Possibly already removed?)")
+            elif room_id:
+                # If room_id was retrieved but wasn't in the set (e.g., callback ran twice?)
+                logger.warning(f"[Optimizer Callback Room {room_id}] Task finished, but room was not marked as optimizing in the set.")
+            else:
+                # If we couldn't even get the room_id (serious error in task or callback)
+                logger.error("[Optimizer Callback] Cannot release lock: room_id is unknown due to failure retrieving task result.")
+            # --- 如果使用 Lock ---
+            # # Alternative using Lock (need self.optimizing_room_lock initialized)
+            # # with self.optimizing_room_lock:
+            # #     if room_id in self.optimizing_rooms:
+            # #         self.optimizing_rooms.remove(room_id)
+            # #         logger.info(f"[Optimizer Callback Room {room_id}] Optimization lock released.")
+            # #     # Handle cases where room_id is missing or not in set as above
 
     def _load_chat_list_for_prompt(self, current_chat_list: List[Dict[str, Any]]) -> Tuple[str, int]:
         """
@@ -1223,106 +1442,135 @@ class LiveAssistantServer:
         # --- 10. 返回最终构建好的消息列表 ---
         return final_messages
 
-    def _invoke_llm(self, context_messages: List[Dict[str, Any]], room_id:str = "N/A") -> Optional[str]:
-        """Calls the configured LLM API with the prepared context."""
-        if not context_messages:
-            print("Error: Cannot invoke LLM with empty context.")
+    def _invoke_llm(self, messages: List[Dict[str, Any]], room_id: str = "N/A", max_tokens_override: Optional[int] = None) -> Optional[str]:
+        """
+        使用准备好的消息调用配置好的 LLM API。
+        如果提供了 max_tokens_override，则可能使用更长的特定超时时间。
+
+        参数:
+            messages (list): 符合 LLM API 规范的消息字典列表。
+            room_id (str, 可选): 用于日志记录的房间 ID。
+            max_tokens_override (int, 可选): 覆盖默认最大响应 token 数。
+
+        返回:
+            str 或 None: 来自 LLM 的响应内容，如果发生错误则为 None。
+        """
+        # 创建一个带作用域的日志记录器
+        scoped_logger = logger.getChild(f"LLM_Invoke(Room:{room_id or 'Global'})")
+        start_time = time.monotonic()
+
+        if not messages:
+            scoped_logger.error("Cannot invoke LLM with empty context messages.")
             return None
 
-        # Calculate final token count for debugging (approximates text tokens)
-        final_token_count = 0
-        for msg in context_messages:
-             content = msg.get("content")
-             if isinstance(content, str):
-                  final_token_count += self._calculate_tokens(content)
-             elif isinstance(content, list): # Vison API format
-                 for item in content:
-                     if item.get("type") == "text":
-                          final_token_count += self._calculate_tokens(item.get("text", ""))
-             # Note: Image token cost is model-specific and not calculated here.
+        # --- 确定本次调用使用的 max_tokens 和 timeout ---
+        current_max_tokens = max_tokens_override if max_tokens_override is not None else self.max_llm_response_tokens
+        is_optimization_call = max_tokens_override is not None # 标记这是否是一个 override 调用 (可能需要长超时)
 
-        # Add system prompt tokens if they aren't already in the message list (standard mode)
-        if self.system_prompt_mode == 'standard':
-            final_token_count += self.system_prompt_tokens
+        # **** 开始修改：条件超时逻辑 ****
+        if is_optimization_call:
+            # 如果 max_tokens 被覆盖了 (假设是优化调用)，使用特定的优化超时时间
+            current_timeout = self.llm_optimize_timeout_seconds
+            # (或者，如果硬编码: current_timeout = self.llm_optimize_timeout_value)
+            scoped_logger.info(f"Using specific optimization timeout: {current_timeout}s")
+        else:
+            # 否则，使用默认的 API 超时时间
+            current_timeout = self.api_timeout_seconds
+            scoped_logger.info(f"Using default timeout: {current_timeout}s")
+        # **** 结束修改 ****
 
-        self._print_context_debug(context_messages, final_token_count) # Show what's being sent
-
-        # Final check against theoretical max tokens (minus buffer for response)
-        # This check is approximate because image tokens aren't counted.
-        if final_token_count >= self.max_total_tokens:
-             print(f"WARNING: Estimated text token count ({final_token_count}) is close to or exceeds limit ({self.max_total_tokens}). Prompt might be truncated by API.")
-             # Proceed, but be aware. A stricter check could abort here.
-             # return None
+        scoped_logger.info(f"Using max_tokens: {current_max_tokens} (Override active: {is_optimization_call})")
 
         try:
-            print(f"🧠 Invoking LLM (Model: {self.llm_api_model})...")
-            start_llm_time = time.monotonic()
-            response = self.llm_client.chat.completions.create(
-                model=self.llm_api_model,
-                messages=context_messages,
-                max_tokens=self.max_llm_response_tokens, # Limit response length
-                timeout=self.api_timeout_seconds,      # API call timeout from config
-                # Optional common parameters (can be added to .env too)
-                # temperature=get_env_float('LLM_TEMPERATURE', 0.7),
-                # top_p=get_env_float('LLM_TOP_P', 1.0),
-            )
-            end_llm_time = time.monotonic()
-            llm_duration = end_llm_time - start_llm_time
+            # --- 准备 API 调用参数 ---
+            api_params = {
+                "model": self.llm_api_model,
+                "messages": messages,
+                "max_tokens": current_max_tokens,
+                # **** 使用计算出的 current_timeout ****
+                "timeout": current_timeout,
+                # 如果需要温度等参数，确保它们也在这里
+                # "temperature": self.llm_temperature,
+            }
+            api_params = {k: v for k, v in api_params.items() if v is not None}
 
-            # Validate response structure
+            scoped_logger.debug(f"Calling LLM API. Model: {self.llm_api_model}, Messages Count: {len(messages)}, Max Tokens: {current_max_tokens}, Timeout: {current_timeout}s")
+            if scoped_logger.isEnabledFor(logging.DEBUG):
+                short_messages_preview = json.dumps(messages, ensure_ascii=False, indent=2)
+                if len(short_messages_preview) > 500:
+                     short_messages_preview = short_messages_preview[:500] + "..."
+                scoped_logger.debug(f"Messages (preview): {short_messages_preview}")
+
+            # --- 执行 API 调用 ---
+            response = self.llm_client.chat.completions.create(**api_params)
+
+            # --- 处理响应 ---
+            duration = time.monotonic() - start_time
+
             if (response and response.choices and len(response.choices) > 0 and
-                    response.choices[0].message and response.choices[0].message.content):
+                    response.choices[0].message and hasattr(response.choices[0].message, 'content') ): # 稍微改进检查
 
-                gpt_content = response.choices[0].message.content.strip()
+                # 特别处理 content 可能为 None 的情况 (虽然理论上 ChatCompletionMessage.content 不应为 None，但以防万一)
+                content_value = response.choices[0].message.content
+                if content_value is None:
+                    scoped_logger.warning("LLM response message content is unexpectedly None, treating as empty.")
+                    content = "" # 将 None 视为空字符串处理
+                else:
+                    content = content_value.strip()
+
                 finish_reason = response.choices[0].finish_reason
+                prompt_tokens = getattr(response.usage, 'prompt_tokens', 'N/A')
+                completion_tokens = getattr(response.usage, 'completion_tokens', 'N/A')
+                total_tokens = getattr(response.usage, 'total_tokens', 'N/A')
 
-                # Log usage details from response object
-                prompt_tokens = response.usage.prompt_tokens if response.usage else 'N/A'
-                completion_tokens = response.usage.completion_tokens if response.usage else 'N/A'
-                total_tokens = response.usage.total_tokens if response.usage else 'N/A'
+                scoped_logger.info(f"LLM call successful. Duration: {duration:.2f}s, Finish Reason: {finish_reason}")
+                scoped_logger.info(f"LLM Token Usage: Prompt={prompt_tokens}, Completion={completion_tokens}, Total={total_tokens}")
+                if scoped_logger.isEnabledFor(logging.DEBUG):
+                     scoped_logger.debug(f"LLM Raw Response (content preview): {content[:200] + '...' if len(content) > 200 else content}")
 
-                print(f"✅ LLM call successful ({llm_duration:.2f}s). Finish Reason: {finish_reason}")
-                print(f"   LLM Token Usage: Prompt={prompt_tokens}, Completion={completion_tokens}, Total={total_tokens}")
-                # print(f"   LLM Response Raw: {gpt_content[:500]}...") # Print start of raw response if needed
-
-                # Check if response was cut off by token limit
                 if finish_reason == 'length':
-                    print("Warning: LLM response may have been truncated due to max_tokens limit.")
+                     scoped_logger.warning(f"LLM response may have been truncated due to the max_tokens limit ({current_max_tokens}) or potentially an internal model limit if content is empty.")
+                     # 补充检查：如果 finish_reason 是 length 但内容为空，可能意味着输入+请求输出超过了模型上下文总长
+                     if not content and prompt_tokens != 'N/A' and completion_tokens == 0:
+                         scoped_logger.warning(f"Finish reason is 'length' with empty content and 0 completion tokens (Prompt tokens: {prompt_tokens}). This often indicates the prompt itself consumed most or all of the model's context window.")
 
-                return gpt_content
+                # 即使内容为空也返回，让调用者决定如何处理空字符串
+                return content
             else:
-                print(f"Error: Unexpected LLM response structure or empty content.")
-                print(f"Raw Response: {response}") # Log the raw response for diagnosis
+                 # 记录更详细的错误，为什么我们认为它结构不正确
+                error_details = []
+                if not response: error_details.append("Response object is None")
+                elif not response.choices: error_details.append("Response has no 'choices'")
+                elif len(response.choices) == 0: error_details.append("Response 'choices' list is empty")
+                elif not response.choices[0].message: error_details.append("First choice has no 'message' object")
+                elif not hasattr(response.choices[0].message, 'content'): error_details.append("Message object has no 'content' attribute")
+                # else content is None or empty handled above
+
+                scoped_logger.error(f"Unexpected LLM response structure or empty content. Details: {', '.join(error_details)}")
+                try:
+                    raw_resp_str = str(response)
+                    scoped_logger.error(f"Raw Response Object (truncated): {raw_resp_str[:1000]}")
+                except Exception as log_err:
+                    scoped_logger.error(f"Could not serialize raw response for logging: {log_err}")
                 return None
 
-        except openai.APITimeoutError as e: # Use specific exception type name 'openai.APITimeoutError'
-            print(f"\n❌ Error: LLM API call timed out after {self.api_timeout_seconds} seconds.")
-            print(f"   Error details: {e}")
-            return None
+        # --- 错误处理 ---
         except openai.APIConnectionError as e:
-             print(f"\n❌ Error: Could not connect to LLM API at {self.llm_api_url}.")
-             print(f"   Check network connectivity and the LLM_API_URL in your .env file.")
-             print(f"   Error details: {e}")
-             return None
-        except openai.AuthenticationError as e:
-             print(f"\n❌ Error: LLM API Authentication failed. Check your LLM_API_KEY.")
-             print(f"   Error details: {e}")
-             return None
+            scoped_logger.error(f"LLM API Connection Error: {e}")
         except openai.RateLimitError as e:
-             print(f"\n❌ Error: LLM API rate limit exceeded. Please check your plan and usage limits.")
-             print(f"   Error details: {e}")
-             # Consider implementing backoff/retry logic here for production
-             return None
-        except openai.APIStatusError as e: # Catch broader API errors (e.g., 4xx, 5xx)
-             print(f"\n❌ Error: LLM API returned an error status.")
-             print(f"   Status Code: {e.status_code}")
-             print(f"   Response: {e.response.text[:500] if hasattr(e, 'response') and e.response else 'N/A'}")
-             return None
+            scoped_logger.error(f"LLM Rate Limit Exceeded: {e}")
+        except openai.APITimeoutError as e:
+            # **** 在日志中报告实际使用的超时时间 ****
+            scoped_logger.error(f"LLM API Timeout Error ({current_timeout}s): {e}")
+        except openai.AuthenticationError as e:
+             scoped_logger.error(f"LLM API Authentication Error: {e}. Check your API key.")
+        except openai.APIStatusError as e:
+             scoped_logger.error(f"LLM API Status Error: Status Code={getattr(e, 'status_code', 'N/A')}, Response={getattr(e, 'response', 'N/A')}")
         except Exception as e:
-            # Catch any other unexpected exceptions during the API call
-            print(f"\n❌ Unexpected Error during LLM API call: {e}")
-            print(traceback.format_exc())
-            return None
+            scoped_logger.error(f"An unexpected error occurred during LLM invocation: {e}")
+            scoped_logger.error(traceback.format_exc())
+
+        return None
 
     def _parse_and_update_state(
         self,
@@ -1382,6 +1630,47 @@ class LiveAssistantServer:
 
         if new_notepad_notes:
             self._append_to_notepad(room_id, new_notepad_notes)
+            
+        # +++ 新增: 检查并触发后台 Notepad 优化 +++
+        # +++ Added: Check and trigger background notepad optimization +++
+        if self.notepad_auto_optimize_enabled and new_notepad_notes: # Only check if notes were actually added
+            try:
+                current_total_tokens = self._get_notepad_total_tokens(room_id)
+                # print(f"DEBUG: Notepad total tokens for room {room_id}: {current_total_tokens}") # Debug print
+
+                # Check threshold and if not already optimizing
+                # 检查阈值以及是否尚未在优化中
+                # --- 使用集合进行并发控制 ---
+                if current_total_tokens > self.notepad_auto_optimize_threshold_tokens and room_id not in self.optimizing_rooms:
+                    logger.warning(f"[Room {room_id}] Notepad size ({current_total_tokens} tokens) exceeded threshold ({self.notepad_auto_optimize_threshold_tokens}). Scheduling background optimization.")
+                    # Mark room as optimizing BEFORE submitting task
+                    # 在提交任务前将房间标记为优化中
+                    self.optimizing_rooms.add(room_id)
+                    # Submit the optimization task to the background executor
+                    # 将优化任务提交到后台执行器
+                    future = self.optimization_executor.submit(self._run_notepad_optimization, room_id)
+                    # Add the callback to release the lock when done
+                    # 添加回调以在完成后释放锁
+                    future.add_done_callback(self._optimization_task_done)
+
+                # --- 如果使用 Lock (需要 self.optimizing_room_lock) ---
+                # # Alternative using Lock:
+                # # check_needed = False
+                # # with self.optimizing_room_lock:
+                # #     if room_id not in self.optimizing_rooms:
+                # #         check_needed = True
+                #
+                # # if check_needed and current_total_tokens > self.notepad_auto_optimize_threshold_tokens:
+                # #     logger.warning(f"[Room {room_id}] Notepad size ({current_total_tokens} tokens) exceeded threshold ({self.notepad_auto_optimize_threshold_tokens}). Scheduling background optimization.")
+                # #     # Mark room as optimizing WITHIN the lock usually, or handle race carefully
+                # #     with self.optimizing_room_lock:
+                # #          self.optimizing_rooms.add(room_id) # Mark under lock
+                # #     future = self.optimization_executor.submit(self._run_notepad_optimization, room_id)
+                # #     future.add_done_callback(self._optimization_task_done) # Callback handles removal
+
+            except Exception as check_err:
+                 # Log error during check/schedule phase, but don't crash request
+                 logger.error(f"[Room {room_id}] Error during notepad auto-optimization check/scheduling: {check_err}")
 
         self._save_context(room_id, final_recording_context)
 
@@ -1734,6 +2023,17 @@ def handle_upload():
 
         end_handle_time = time.monotonic()
         # print(f"--- Request handler for room {scoped_room_id} finished in {end_handle_time - start_handle_time:.3f} seconds ---") # Redundant with process_request log
+
+@atexit.register
+def shutdown_executor():
+    """Function to be called upon script exit to shutdown the thread pool."""
+    """脚本退出时调用以关闭线程池的函数。"""
+    if hasattr(live_server, 'optimization_executor') and live_server.optimization_executor:
+        print("\nShutting down background optimization executor...")
+        # wait=True ensures pending tasks try to complete. Adjust as needed.
+        # wait=True 确保待处理的任务尝试完成。根据需要调整。
+        live_server.optimization_executor.shutdown(wait=True)
+        print("Optimization executor shut down.")
 
 # --- Main Execution Block ---
 if __name__ == '__main__':
