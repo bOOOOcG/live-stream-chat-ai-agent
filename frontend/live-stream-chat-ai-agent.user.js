@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.3.4
+// @version      1.4.0
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (YouTube, twitch, Bilibili). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台(YouTube, twitch, Bilibili) 自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台(YouTube, twitch, Bilibili) 自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
@@ -10,7 +10,8 @@
 // @match        https://live.bilibili.com/*
 // @match        https://www.youtube.com/watch*
 // @match        https://www.twitch.tv/*
-// @grant        none
+// @resource      monsteraIcon   https://res.cloudinary.com/dbn9dauue/image/upload/v1746443646/icon/mostera_icon_A.png
+// @grant         GM_getResourceURL
 // ==/UserScript==
 
 (function () {
@@ -26,6 +27,10 @@
     const SCREENSHOT_WIDTH = 1280; // 期望的截图宽度
     const SCREENSHOT_HEIGHT = 720; // 期望的截图高度
     const SCREENSHOT_QUALITY = 0.9; // 截图 JPEG 质量 (0.0 到 1.0)
+
+    // 获取 Monstera 图标 URL
+    const monsteraIconUrl = GM_getResourceURL('monsteraIcon');
+    let monsteraButton = null; // 用于存储图标按钮元素的引用
 
     // --- 平台适配器定义 ---
     const platformAdapters = {
@@ -834,6 +839,7 @@
         z-index: 10000;
         user-select: none;
         overflow: visible; /* ← 允许 tooltip 溢出 */
+        display: none; /* 初始状态隐藏 */
     }
     .panel-header {
         padding: 12px 16px;
@@ -958,6 +964,28 @@
     .run-button:disabled {
         background-color: #9ca3af;
         cursor: not-allowed;
+    }
+
+    /* --- Monstera 图标按钮样式 --- */
+    #monstera-toggle-button {
+        position: fixed;
+        bottom: 20px; /* 定位在右下角 */
+        right: 20px;
+        width: 50px;  /* 图标大小 */
+        height: 50px;
+        background-image: url(${monsteraIconUrl}); /* 使用获取到的 URL */
+        background-size: contain; /* 确保图标完整显示 */
+        background-repeat: no-repeat;
+        background-position: center;
+        border-radius: 50%; /* 圆形按钮 */
+        cursor: pointer;
+        z-index: 9999;  /* 比面板低一层，确保面板打开时在按钮上方 */
+        transition: transform 0.4s ease-in-out; /* 平滑旋转动画 */
+        box-shadow: 0 3px 8px rgba(0,0,0,0.2); /* 可选：加点阴影 */
+    }
+
+    #monstera-toggle-button.rotated {
+        transform: rotate(60deg); /* 旋转角度，表示面板已打开 */
     }
 
     /* --- Tooltip --- */
@@ -1233,6 +1261,13 @@
         // --- 拖动逻辑 ---
         console.log("AI Agent: 开始绑定拖动逻辑...");
         let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+
+        // Monstera 按钮拖动状态变量
+        let isButtonDragging = false;
+        let buttonStartX = 0, buttonStartY = 0;
+        let buttonOrigX = 0, buttonOrigY = 0;
+        let buttonWasDragged = false; // 标记是否发生了实际拖动，区分点击
+
         header.addEventListener('mousedown', e => {
             if (e.button !== 0) return; // 只响应左键
             isDragging = true;
@@ -1274,6 +1309,135 @@
         console.log("AI Agent: 拖动逻辑绑定完成。");
 
         console.log("AI Agent: 控制面板 UI 创建和初始化完成！");
+
+        // 创建 Monstera 图标按钮
+        monsteraButton = document.createElement('div');
+        monsteraButton.id = 'monstera-toggle-button';
+        monsteraButton.title = '切换 AI 控制面板'; // 中文提示
+
+        // 定义切换面板可见性的函数
+        const togglePanelVisibility = () => {
+            if (!panel || !monsteraButton) return; // 安全检查
+
+            const isVisible = panel.style.display !== 'none';
+            if (isVisible) {
+                panel.style.display = 'none';
+                monsteraButton.classList.remove('rotated');
+                console.log("面板已隐藏");
+            } else {
+                panel.style.display = 'block'; // 或者 'flex' 如果你的面板布局需要
+                monsteraButton.classList.add('rotated');
+                console.log("面板已显示");
+            }
+        };
+
+        // 为按钮添加点击事件监听器
+        monsteraButton.addEventListener('click', togglePanelVisibility);
+
+        // 将按钮添加到页面
+        try {
+            document.body.appendChild(monsteraButton);
+
+            console.log("AI Agent: Monstera 切换按钮已添加到页面。");
+        } catch (e) {
+            console.error("AI Agent: 添加 Monstera 切换按钮失败:", e);
+        }
+        if (monsteraButton) { // 确保按钮存在
+
+            monsteraButton.addEventListener('mousedown', e => {
+                if (e.button !== 0 || !monsteraButton) return; // 只响应左键
+
+                isButtonDragging = true;
+                buttonWasDragged = false; // 重置拖动标记
+                buttonStartX = e.clientX;
+                buttonStartY = e.clientY;
+
+                // 获取按钮当前计算后的位置
+                const computedStyle = window.getComputedStyle(monsteraButton);
+                // 尝试解析 top/left，如果初始是 bottom/right，会有问题
+                // 改为使用 getBoundingClientRect 更可靠
+                const rect = monsteraButton.getBoundingClientRect();
+                buttonOrigX = rect.left;
+                buttonOrigY = rect.top;
+
+                // 使用 style.left/top 覆盖 CSS 的 bottom/right 定位
+                monsteraButton.style.right = 'auto';
+                monsteraButton.style.bottom = 'auto';
+                monsteraButton.style.left = `${buttonOrigX}px`;
+                monsteraButton.style.top = `${buttonOrigY}px`;
+
+                monsteraButton.style.transition = 'none'; // 拖动时取消过渡
+                document.body.style.userSelect = 'none'; // 禁止选择文本
+                monsteraButton.style.cursor = 'grabbing'; // 更改鼠标样式
+                // console.log("开始拖动 Monstera 按钮");
+            });
+
+            // 注意：mousemove 和 mouseup 监听器添加到 document 上，
+            // 这样即使鼠标移出按钮范围也能继续拖动。
+            document.addEventListener('mousemove', e => {
+                if (!isButtonDragging || !monsteraButton) return;
+
+                const dx = e.clientX - buttonStartX;
+                const dy = e.clientY - buttonStartY;
+
+                // 只有当移动超过一个很小的阈值时才标记为已拖动
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                    buttonWasDragged = true;
+                }
+
+                monsteraButton.style.left = `${buttonOrigX + dx}px`;
+                monsteraButton.style.top = `${buttonOrigY + dy}px`;
+            });
+
+            document.addEventListener('mouseup', e => {
+                if (e.button !== 0 || !isButtonDragging || !monsteraButton) return; // 只处理左键且正在拖动
+
+                isButtonDragging = false;
+                monsteraButton.style.transition = 'transform 0.4s ease-in-out'; // 恢复旋转动画过渡
+                document.body.style.userSelect = ''; // 恢复文本选择
+                monsteraButton.style.cursor = 'pointer'; // 恢复鼠标样式
+                // console.log("结束拖动 Monstera 按钮");
+
+                // 保存按钮位置到 localStorage，以便下次加载时恢复
+                try {
+                    localStorage.setItem('monsteraButtonPos', JSON.stringify({left: monsteraButton.style.left, top: monsteraButton.style.top}));
+                } catch (saveErr) {
+                    console.warn("无法保存按钮位置", saveErr);
+                }
+            });
+
+            // 修改点击事件处理，防止拖动后触发切换
+            const originalToggleFn = togglePanelVisibility; // 保存原始函数引用
+            monsteraButton.removeEventListener('click', togglePanelVisibility); // 移除旧监听器
+            monsteraButton.addEventListener('click', () => {
+                if (buttonWasDragged) {
+                    // 如果拖动过，则不执行切换操作
+                    // console.log("拖动结束，阻止了点击切换事件");
+                    buttonWasDragged = false; // 重置标记
+                    return;
+                }
+                // 如果没有拖动，执行原始的切换函数
+                originalToggleFn();
+            });
+
+            // 页面加载时尝试恢复按钮位置
+            // try {
+            //     const savedPos = localStorage.getItem('monsteraButtonPos');
+            //     if (savedPos) {
+            //         const pos = JSON.parse(savedPos);
+            //         if (pos.left && pos.top) {
+            //             monsteraButton.style.right = 'auto';
+            //             monsteraButton.style.bottom = 'auto';
+            //             monsteraButton.style.left = pos.left;
+            //             monsteraButton.style.top = pos.top;
+            //             console.log("恢复 Monstera 按钮位置:", pos);
+            //         }
+            //     }
+            // } catch (loadErr) {
+            //     console.warn("无法加载按钮位置", loadErr);
+            // }
+        }
+
     } // createControlPanel 函数结束
 
     /**
