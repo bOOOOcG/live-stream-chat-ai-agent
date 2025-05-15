@@ -2,7 +2,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
 
-| [ ENGLISH ](README.md) | [ 中文 ](README.zh-CN.md) |
+| [ ENGLISH ](README.md) | **中文** | [ 官方网站 ](https://lsca.enou.org/) |
 
 一个由 AI 驱动的代理程序，设计用于观看直播、理解内容（音频、弹幕、画面），并使用大型语言模型 (LLM) 自动参与弹幕互动。
 
