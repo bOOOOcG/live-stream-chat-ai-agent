@@ -330,7 +330,7 @@
                 // YouTube消息本身就是指定选择器的元素，无需额外检查 node.matches
 
                 try {
-                    const authorName = node.querySelector('#author-name')?.textContent.trim() || '未知';
+                    const authorName = node.querySelector('#author-name')?.textContent.trim() || 'Unknown';
                     let message = '';
 
                     // 根据不同的消息类型提取内容 (复用旧的 collectChatMessages 逻辑片段)
@@ -346,14 +346,14 @@
                         }
                     } else if (node.matches('yt-live-chat-paid-message-renderer')) {
                         const price = node.querySelector('#purchase-amount')?.textContent.trim() || '';
-                        const paidMsg = node.querySelector('#message')?.innerText.trim() || '(无留言)';
+                        const paidMsg = node.querySelector('#message')?.innerText.trim() || '[No message content]';
                         message = `[SuperChat ${price}] ${paidMsg}`;
                     } else if (node.matches('yt-live-chat-paid-sticker-renderer')) {
                         const price = node.querySelector('#purchase-amount')?.textContent.trim() || '';
-                        message = `[SuperSticker ${price}] [发送了超级贴图]`;
+                        message = `[SuperSticker ${price}] [Super Sticker Message]`;
                     } else if (node.matches('yt-live-chat-membership-item-renderer')) {
                         const giftText = node.innerText.trim();
-                        message = `[会员消息] ${giftText}`;
+                        message = `[Membership Message] ${giftText}`;
                     } else {
                         return null; // 未知类型的节点
                     }
@@ -362,7 +362,7 @@
                         return { uname: authorName, content: message };
                     }
                 } catch (e) {
-                    console.error("[YT Adapter] 提取实时聊天数据时出错:", e, node);
+                    console.error("[YT Adapter] Error extracting real-time chat data:", e, node);
                 }
                 return null;
             },
@@ -521,7 +521,7 @@
             findVideoElement: () => {
                 const video = document.querySelector('video');
                 if (!video) {
-                    console.warn("Twitch Adapter: 無法找到 <video> 元素。");
+                    console.warn("Twitch Adapter: Could not find <video> element.");
                 }
                 return video;
             },
@@ -570,7 +570,7 @@
                         return { uname, content };
                     }
                 } catch (e) {
-                    console.error("[Twitch Adapter] 提取实时聊天数据时出错:", e, node);
+                    console.error("[Twitch Adapter] Error extracting real-time chat data:", e, node);
                 }
                 return null;
             },
@@ -583,7 +583,7 @@
             sendChatMessage(message) {
                 return new Promise((resolve) => {
                     if (typeof message !== 'string' || !message.trim()) {
-                        console.error("Twitch适配器：消息为空或非法，无法发送。");
+                        console.error("Twitch Adapter: Message is empty or invalid, cannot send.");
                         resolve('error');
                         return;
                     }
@@ -592,18 +592,18 @@
                     const sendButton = document.querySelector('button[data-a-target="chat-send-button"]');
 
                     if (!target) {
-                        console.error("Twitch适配器：找不到聊天输入框 (div[data-slate-node='element'])。");
+                        console.error("Twitch Adapter: Chat input box not found (div[data-slate-node='element']).");
                         resolve('not_found');
                         return;
                     }
                     if (!sendButton) {
-                        console.error("Twitch适配器：找不到发送按钮 (button[data-a-target='chat-send-button'])。");
+                        console.error("Twitch Adapter: Send button not found (button[data-a-target='chat-send-button']).");
                         resolve('not_found');
                         return;
                     }
 
                     if (sendButton.disabled) {
-                        console.warn("Twitch适配器：发送按钮当前禁用（慢速模式或禁言）。");
+                        console.warn("Twitch Adapter: Send button is currently disabled (slow mode or chat ban).");
                         resolve('disabled');
                         return;
                     }
@@ -633,16 +633,16 @@
                         setTimeout(() => {
                             if (!sendButton.disabled) {
                                 sendButton.click();
-                                console.log(`✅ Twitch适配器：已成功发送消息 "${message}"`);
+                                console.log(`✅ Twitch Adapter: Successfully sent message "${message}"`);
                                 resolve('success');
                             } else {
-                                console.warn("Twitch适配器：点击前按钮被禁用了。");
+                                console.warn("Twitch Adapter: Button was disabled before clicking.");
                                 resolve('disabled');
                             }
                         }, 100); // 延迟 100ms 等待 paste 完成
 
                     } catch (err) {
-                        console.error("Twitch适配器：发送聊天消息时发生错误：", err);
+                        console.error("Twitch Adapter: Error occurred while sending chat message:", err);
                         resolve('error');
                     }
                 });
@@ -662,7 +662,7 @@
         // 原始的时间显示类检查 (备用)
         const timeDisplay = document.querySelector('.ytp-time-display');
         if (timeDisplay && timeDisplay.classList.contains('ytp-live')) {
-            console.log("YT Live Check: 在时间显示上找到 'ytp-live' 类。");
+            console.log("YT Live Check: Found 'ytp-live' class on time display.");
             return true;
         }
 
@@ -671,7 +671,7 @@
         if (premiereTextElement) {
             const premiereText = premiereTextElement.textContent?.toUpperCase();
             if (premiereText && (premiereText.includes('PREMIERE') || premiereText.includes('首播') || premiereText.includes('UPCOMING'))) {
-                console.log("YT Live Check: 找到首映或即将播放指示器。");
+                console.log("YT Live Check: Found premiere or upcoming indicator.");
                 return false; // 如果是首映/即将播放，肯定不是直播
             }
         }
@@ -679,11 +679,11 @@
         // 特别查找控制栏中的红色 "LIVE" 圆点指示器
         const liveControlDot = document.querySelector('.ytp-chrome-controls .ytp-live-badge[disabled="false"] .ytp-menuitem-toggle-checkbox');
         if (liveControlDot) {
-            console.log("YT Live Check: 找到直播控制圆点指示器。");
+            console.log("YT Live Check: Found live control dot indicator.");
             return true;
         }
 
-        console.log("YT Live Check: 未找到明确的直播指示器。假设是 VOD 或首映。");
+        console.log("YT Live Check: No clear live indicator found. Assuming VOD or premiere.");
         return false; // 如果没找到明确指示，则默认为 false
     }
 
@@ -742,9 +742,9 @@
                     shouldUseAdapter = false; // 不能检查，就假设不可用
                 } else if (!isYouTubeLiveNow()) { // 调用函数检查是否真的是直播
                     shouldUseAdapter = false; // 是 YouTube 但不是直播
-                    console.log(`AI Agent (${adapter.platformName}): 检测到页面，但当前不是直播 (VOD/首映)。代理将不会激活。`);
+                    console.log(`AI Agent (${adapter.platformName}): Page detected, but it's not currently a live stream (VOD/Premiere). Agent will not activate.`);
                 } else {
-                    console.log(`AI Agent (${adapter.platformName}): 检测到直播流。继续激活。`);
+                    console.log(`AI Agent (${adapter.platformName}): Live stream detected. Proceeding with activation.`);
                     // 是 YouTube 并且是直播，shouldUseAdapter 保持 true
                 }
             }
@@ -752,7 +752,7 @@
             // 如果平台确认可用
             if (shouldUseAdapter) {
                 currentPlatformAdapter = adapter;
-                console.log(`AI Agent: 为平台激活: ${currentPlatformAdapter.platformName}`);
+                console.log(`AI Agent: Activated for platform: ${currentPlatformAdapter.platformName}`);
                 break; // 找到可用适配器后停止搜索
             }
             // 如果是 YouTube VOD，shouldUseAdapter 为 false，循环继续（但不会找到其他匹配项）
@@ -766,13 +766,13 @@
         // 改成异步等待roomId成功
         waitForRoomId(currentPlatformAdapter, 10, 500).then(resolvedRoomId => { // <-- 把参数名改成 resolvedRoomId，避免混淆
             if (!resolvedRoomId) {
-                console.error(`AI Agent (${currentPlatformAdapter.platformName}): 最终仍无法确定房间/视频 ID。代理可能无法正常工作。`);
+                console.error(`AI Agent (${currentPlatformAdapter.platformName}): Ultimately unable to determine Room/Video ID. Agent may not function correctly.`);
                 // 这里可以选择不加载UI，或者加载但禁用启动按钮，取决于你的需求
             } else {
-                console.log(`AI Agent (${currentPlatformAdapter.platformName}): 为房间/视频 ID 初始化: ${resolvedRoomId}`);
+                console.log(`AI Agent (${currentPlatformAdapter.platformName}):  Initialized for Room/Video ID: ${resolvedRoomId}`);
                 // !!! 添加这一行，把获取到的 ID 赋值给全局变量 !!!
                 roomId = resolvedRoomId;
-                console.log("全局 roomId 已更新为:", roomId); // 添加确认日志
+                console.log("Global roomId has been updated to:", roomId); // 添加确认日志
             }
 
             // 无论是否成功拿到roomId，都继续加载UI
@@ -782,7 +782,7 @@
         });
 
     } else {
-        console.log("AI Agent: 未检测到适用的直播平台或未满足必要条件。脚本将不会注入 UI 或激活。");
+        console.log("AI Agent: No applicable live stream platform detected or necessary conditions not met. Script will not inject UI or activate.");
         return;
     }
 
@@ -820,7 +820,7 @@
          * 创建控制面板 UI 并注入到页面中（使用 DOM 操作方法构建，兼容 Trusted Types）。
          */
     function createControlPanel() {
-        console.log("AI Agent: 开始创建控制面板...");
+        console.log("AI Agent: Starting to create control panel...");
 
         // --- 1. 注入样式 ---
         const style = document.createElement('style');
@@ -977,6 +977,7 @@
         background-size: contain; /* 确保图标完整显示 */
         background-repeat: no-repeat;
         background-position: center;
+        background-color: white; /* 添加白色背景 */
         border-radius: 50%; /* 圆形按钮 */
         cursor: pointer;
         z-index: 9999;  /* 比面板低一层，确保面板打开时在按钮上方 */
@@ -1040,9 +1041,9 @@
     `;
         try {
             document.head.appendChild(style);
-            console.log("AI Agent: 样式注入成功。");
+            console.log("AI Agent: Styles injected successfully.");
         } catch (e) {
-            console.error("AI Agent: 注入样式失败:", e);
+            console.error("AI Agent: Failed to inject styles:", e);
             return; // 样式注入失败则不继续
         }
 
@@ -1061,7 +1062,7 @@
         const menuSpan = document.createElement('span');
         menuSpan.className = 'panel-menu';
         menuSpan.textContent = '⋮'; // 使用 Unicode 垂直省略号字符
-        menuSpan.title = 'Menu'; // 鼠标悬浮提示
+        menuSpan.title = 'Menu';
 
         header.appendChild(titleSpan);
         header.appendChild(menuSpan);
@@ -1168,7 +1169,7 @@
         runButton = document.createElement('button'); // 直接赋值给全局变量
         runButton.id = 'run-button';
         runButton.className = 'run-button';
-        runButton.textContent = 'Start'; // 中文标签
+        runButton.textContent = 'Start';
         runButton.disabled = true; // 初始禁用
         contentDiv.appendChild(runButton);
 
@@ -1177,9 +1178,9 @@
         // --- 3. 将面板添加到页面 ---
         try {
             document.body.appendChild(panel);
-            console.log("AI Agent: 控制面板成功添加到页面 Body。");
+            console.log("AI Agent: Control panel successfully added to page body.");
         } catch (e) {
-            console.error("AI Agent: 添加面板到 Body 时出错:", e);
+            console.error("AI Agent: Error adding panel to body:", e);
             // 失败时尝试移除可能部分添加的元素
             try { style.remove(); } catch (removeErr) { }
             try { panel.remove(); } catch (removeErr) { }
@@ -1196,42 +1197,42 @@
 
         // 检查元素是否都找到了
         if (!mainSwitch || !chatPermissionSwitch || !muteAudioSwitch || !volumeSlider || !runButton || !header) {
-            console.error("AI Agent: 未能在面板中找到一个或多个必要的控制元素！");
+            console.error("AI Agent: Failed to find one or more necessary control elements in the panel!");
             try { panel.remove(); } catch (removeErr) { } // 移除面板
             try { style.remove(); } catch (removeErr) { } // 移除样式
             return;
         }
-        console.log("AI Agent: 成功获取所有控制元素引用。");
+        console.log("AI Agent: Successfully obtained all control element references.");
 
         // --- 添加事件监听 ---
-        console.log("AI Agent: 开始绑定事件监听器...");
+        console.log("AI Agent: Starting to bind event listeners...");
         mainSwitch.addEventListener('change', () => {
             isMainSwitchOn = mainSwitch.checked;
-            console.log("主控制开关状态:", isMainSwitchOn);
+            console.log("Master control switch state:", isMainSwitchOn);
 
             // 检查按钮状态：需要主开关打开，并且(我们已经跟踪了一个有效的视频元素 或 适配器能找到一个)
             const videoElement = currentVideoElement || currentPlatformAdapter?.findVideoElement();
             runButton.disabled = !(isMainSwitchOn && !!videoElement);
 
-            console.log("运行按钮禁用状态:", runButton.disabled);
+            console.log("Run button disabled state:", runButton.disabled);
             if (!isMainSwitchOn && isAgentRunning) {
-                console.log("主控制关闭，停止代理...");
+                console.log("Master control off, stopping agent...");
                 stopAgent();
             }
         });
 
         chatPermissionSwitch.addEventListener('change', () => {
             isChatPermissionGranted = chatPermissionSwitch.checked;
-            console.log("聊天权限开关状态:", isChatPermissionGranted);
+            console.log("Chat permission switch state:", isChatPermissionGranted);
             if (!isChatPermissionGranted) {
-                console.log("聊天权限关闭，清空待发送队列。");
+                console.log("Chat permission off, clearing send queue.");
                 chatQueue = []; // 如果撤销权限，清空队列
             }
         });
 
         muteAudioSwitch.addEventListener('change', () => {
             isMuted = muteAudioSwitch.checked;
-            console.log("静音开关状态:", isMuted);
+            console.log("Mute switch state:", isMuted);
             updateGain();
         });
 
@@ -1241,25 +1242,25 @@
         });
         // 可选: 添加 change 事件监听器，在用户松开滑块时 log 一次最终值
         volumeSlider.addEventListener('change', () => {
-            console.log("音量滑块最终值:", volumeSlider.value);
+            console.log("Volume slider final value:", volumeSlider.value);
             if (!isMuted) updateGain(); // 确保最终值被设置
         });
 
         runButton.addEventListener('click', () => {
             if (isAgentRunning) {
-                console.log("点击停止按钮");
+                console.log("Stop button clicked");
                 stopAgent();
             } else if (isMainSwitchOn) {
-                console.log("点击启动按钮");
+                console.log("Start button clicked");
                 startAgent();
             } else {
-                console.log("点击启动按钮，但主开关未打开");
+                console.log("Start button clicked, but Control is off");
             }
         });
-        console.log("AI Agent: 事件监听器绑定完成。");
+        console.log("AI Agent: Event listeners bound successfully.");
 
         // --- 拖动逻辑 ---
-        console.log("AI Agent: 开始绑定拖动逻辑...");
+        console.log("AI Agent: Starting to bind drag logic...");
         let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
 
         // Monstera 按钮拖动状态变量
@@ -1282,13 +1283,13 @@
                 const rect = panel.getBoundingClientRect();
                 origX = rect.left;
                 origY = rect.top;
-                console.warn("AI Agent Drag: 无法从 computedStyle 解析 'left'/'top'，使用 getBoundingClientRect 作为备选。");
+                console.warn("AI Agent Drag: Failed to parse 'left'/'top' from computedStyle, using getBoundingClientRect as fallback.");
             }
 
             panel.style.transition = 'none'; // 拖动时取消过渡效果
             document.body.style.userSelect = 'none'; // 拖动时禁止选择文本
             header.style.cursor = 'grabbing'; // 更改鼠标样式
-            console.log("开始拖动面板");
+            console.log("Started dragging panel");
         });
 
         document.addEventListener('mousemove', e => {
@@ -1304,16 +1305,16 @@
             panel.style.transition = ''; // 恢复过渡效果（如果之前有的话）
             document.body.style.userSelect = ''; // 恢复文本选择
             header.style.cursor = 'grab'; // 恢复鼠标样式
-            console.log("结束拖动面板");
+            console.log("Finished dragging panel");
         });
-        console.log("AI Agent: 拖动逻辑绑定完成。");
+        console.log("AI Agent: Drag logic bound successfully.");
 
-        console.log("AI Agent: 控制面板 UI 创建和初始化完成！");
+        console.log("AI Agent: Control panel UI creation and initialization complete!");
 
         // 创建 Monstera 图标按钮
         monsteraButton = document.createElement('div');
         monsteraButton.id = 'monstera-toggle-button';
-        monsteraButton.title = '切换 AI 控制面板'; // 中文提示
+        monsteraButton.title = 'monstera-toggle-button';
 
         // 定义切换面板可见性的函数
         const togglePanelVisibility = () => {
@@ -1323,11 +1324,11 @@
             if (isVisible) {
                 panel.style.display = 'none';
                 monsteraButton.classList.remove('rotated');
-                console.log("面板已隐藏");
+                console.log("Panel hidden");
             } else {
                 panel.style.display = 'block'; // 或者 'flex' 如果你的面板布局需要
                 monsteraButton.classList.add('rotated');
-                console.log("面板已显示");
+                console.log("Panel shown");
             }
         };
 
@@ -1338,9 +1339,9 @@
         try {
             document.body.appendChild(monsteraButton);
 
-            console.log("AI Agent: Monstera 切换按钮已添加到页面。");
+            console.log("AI Agent: Monstera toggle button added to page.");
         } catch (e) {
-            console.error("AI Agent: 添加 Monstera 切换按钮失败:", e);
+            console.error("AI Agent: Failed to add Monstera toggle button:", e);
         }
         if (monsteraButton) { // 确保按钮存在
 
@@ -1402,7 +1403,7 @@
                 try {
                     localStorage.setItem('monsteraButtonPos', JSON.stringify({left: monsteraButton.style.left, top: monsteraButton.style.top}));
                 } catch (saveErr) {
-                    console.warn("无法保存按钮位置", saveErr);
+                    console.warn("Could not save button position", saveErr);
                 }
             });
 
@@ -1449,12 +1450,12 @@
     function startChatObserver() {
         // 如果观察器实例已存在，则表示已经在运行，直接返回
         if (chatObserver) {
-            console.log("AI Agent: 聊天 MutationObserver 已在运行。");
+            console.log("AI Agent: Chat MutationObserver is already running.");
             return;
         }
         // 检查当前平台适配器是否正确加载并配置了必要的选择器
         if (!currentPlatformAdapter || !currentPlatformAdapter.getChatContainerNode || !currentPlatformAdapter.chatMessageSelector) {
-            console.error("AI Agent: 当前平台适配器未正确配置 (缺少 getChatContainerNode 或 chatMessageSelector)，无法启动聊天观察器。");
+            console.error("AI Agent: Current platform adapter not configured correctly (missing getChatContainerNode or chatMessageSelector), cannot start chat observer.");
             return;
         }
 
@@ -1462,22 +1463,21 @@
         const targetNode = currentPlatformAdapter.getChatContainerNode();
 
         if (!targetNode) {
-            // 日志可以保持不变，适配器内部可能已经输出了更具体的警告
-            console.warn(`AI Agent: 未找到聊天容器 (via adapter for ${currentPlatformAdapter.platformName}). 将在 1 秒后重试...`);
+            console.warn(`AI Agent: Chat container not found (via adapter for ${currentPlatformAdapter.platformName}). Retrying in 1 second...`);
             setTimeout(startChatObserver, 1000);
             return;
         }
 
         // 如果没有找到目标容器节点 (可能页面还未完全加载)
         if (!targetNode) {
-            console.warn(`AI Agent: 未找到聊天容器 (${currentPlatformAdapter.chatContainerSelector})。将在 1 秒后重试...`);
+            console.warn(`AI Agent: Chat container not found (${currentPlatformAdapter.chatContainerSelector}). Retrying in 1 second...`);
             // 设置一个短暂的延时后重试启动过程
             setTimeout(startChatObserver, 1000);
             return;
         }
 
         // 找到容器，准备启动观察器
-        console.log(`AI Agent: 找到聊天容器，准备启动 Observer:`, targetNode);
+        console.log(`AI Agent: Found chat container, preparing to start Observer:`, targetNode);
 
         // 定义当观察到 DOM 变动时执行的回调函数
         const observerCallback = (mutationsList) => {
@@ -1544,10 +1544,10 @@
                                     if (!isDuplicate) {
                                         // 将新的聊天消息添加到实时缓冲区
                                         realtimeChatBuffer.push(newChat);
-                                        console.log(`[聊天捕获] ${new Date(timestamp).toLocaleTimeString()} | ${newChat.uname}: ${newChat.content.substring(0, 50)}...`);
+                                        console.log(`[Chat Capture] ${new Date(timestamp).toLocaleTimeString()} | ${newChat.uname}: ${newChat.content.substring(0, 50)}...`);
                                     } else {
                                         // 如果是重复消息，可以选择性地记录日志
-                                        console.log(`[聊天捕获] 检测到重复消息并跳过:`, newChat.uname, newChat.content.substring(0, 30));
+                                        console.log(`[Chat Capture] Duplicate message detected and skipped:`, newChat.uname, newChat.content.substring(0, 30));
                                     }
                                     // --- 防止重复消息逻辑 结束 ---
 
@@ -1557,7 +1557,7 @@
                                 }
                             } catch (extractError) {
                                 // 如果在调用 extractRealtimeChatData 时发生错误，捕获并记录
-                                console.error('[Observer] 调用 extractRealtimeChatData 时出错:', extractError, messageNode);
+                                console.error('[Observer] Error calling extractRealtimeChatData:', extractError, messageNode);
                             }
                         }
                         // else {
@@ -1592,7 +1592,7 @@
             // 使用指定的配置，在找到的聊天容器节点 (targetNode) 上启动观察器
             chatObserver.observe(targetNode, config);
             // 打印成功启动的日志，包含观察模式（直接子节点或整个子树）
-            console.log(`%cAI Agent: 聊天 MutationObserver 已在节点上成功启动 (模式: ${config.subtree ? '子树监听' : '直接子节点监听'})。`, "color: green; font-weight: bold;", targetNode);
+            console.log(`%cAI Agent: Chat MutationObserver successfully started on node (mode: ${config.subtree ? 'subtree listening' : 'direct children listening'}).`, "color: green; font-weight: bold;", targetNode);
 
             // 可选：如果适配器实现了 extractInitialChatMessages 方法，可以在启动时尝试获取页面上已有的最后几条消息
             // 这有助于 AI 在刚启动时就能获得一些上下文
@@ -1602,7 +1602,7 @@
 
         } catch (e) {
             // 如果启动观察器时发生错误 (例如，目标节点无效或配置错误)
-            console.error("AI Agent: 启动聊天 MutationObserver 失败:", e);
+            console.error("AI Agent: Failed to start chat MutationObserver:", e);
             chatObserver = null; // 将观察器实例重置为 null，表示启动失败
         }
     }
@@ -1614,10 +1614,10 @@
         if (chatObserver) {
             chatObserver.disconnect();
             chatObserver = null;
-            console.log("AI Agent: 聊天 MutationObserver 已停止。");
+            console.log("AI Agent: Chat MutationObserver stopped.");
             // 清空缓冲区确保下次启动是干净的
             realtimeChatBuffer = [];
-            console.log("AI Agent: 实时聊天缓冲区已清空。");
+            console.log("AI Agent: Realtime chat buffer cleared.");
         }
     }
 
@@ -1641,9 +1641,9 @@
                 if (refetchedId) {
                     roomId = refetchedId;
                     console.log(`Room ID re-fetched: ${roomId}. Please click Start again.`);
-                    alert("已重新获取房间ID，请再次点击 Start。");
+                    alert("Room ID re-fetched. Please click Start again.");
                 } else {
-                    alert("错误：无法获取房间/视频 ID。请检查页面或刷新重试。");
+                    alert("Error: Could not get Room/Video ID. Please check the page or refresh and try again.");
                 }
             });
             return; // 退出当前启动尝试
@@ -1655,7 +1655,7 @@
         const initialVideoElement = currentPlatformAdapter.findVideoElement();
         if (!initialVideoElement) {
             console.error(`AI Agent (${currentPlatformAdapter.platformName}): Cannot start, initial video element not found.`);
-            alert("错误：启动时未找到视频元素。请确保直播已加载。");
+            alert("Error: Video element not found on start. Please ensure the live stream is loaded.");
             runButton.disabled = true; // 保持禁用，需要用户干预或等待
             return;
         }
@@ -1674,7 +1674,7 @@
             console.log("AI Agent started successfully.");
         } else { // 初始化音频失败
             console.error("Failed to initialize audio. Agent cannot start.");
-            alert("错误：无法访问视频音频。请确保直播/视频正在播放且浏览器允许访问。");
+            alert("Error: Could not access video audio. Please ensure the live stream/video is playing and browser permissions are granted.");
             // 保持按钮和开关的状态（用户需要修复问题）
             isAgentRunning = false; // 确保运行状态为 false
             runButton.textContent = 'Start'; // 中文
@@ -1793,31 +1793,31 @@
         console.log("使用 video 元素初始化音频:", videoElement);
 
         // 检查视频状态和音轨 (可选，有助于调试)
-        if (videoElement.readyState < 1) { console.warn(`视频 readyState (${videoElement.readyState}) 过低。`); }
+        if (videoElement.readyState < 1) { console.warn(`Video readyState (${videoElement.readyState}) is too low.`); }
         const audioTracks = getVideoAudioTracks(videoElement); // 使用辅助函数
-        if (audioTracks.length === 0 && videoElement.readyState < 3) { console.warn("视频可能还没有音轨。"); }
+        if (audioTracks.length === 0 && videoElement.readyState < 3) { console.warn("Video may not have audio tracks yet."); }
 
         try {
             // 如果需要，初始化 AudioContext (只在第一次或关闭后)
             if (!audioContext || audioContext.state === 'closed') {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                console.log("AudioContext 已创建/重新创建。状态:", audioContext.state);
+                console.log("AudioContext created/recreated. State:", audioContext.state);
             }
             // 尝试恢复挂起的 AudioContext
             if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => console.log("AudioContext 已恢复。"))
-                    .catch(e => console.error("恢复 AudioContext 失败:", e));
+                audioContext.resume().then(() => console.log("AudioContext resumed."))
+                    .catch(e => console.error("Failed to resume AudioContext:", e));
             }
 
             // --- 关键：只在节点不存在时创建它们 ---
             if (!destination) {
                 // destination 是录音器使用的目标，不能重新创建，否则录音会断开！
                 destination = audioContext.createMediaStreamDestination();
-                console.log("MediaStreamAudioDestinationNode 已创建。");
+                console.log("MediaStreamAudioDestinationNode created.");
             }
             if (!gainNode) {
                 gainNode = audioContext.createGain(); // 音量控制节点
-                console.log("GainNode 已创建。");
+                console.log("GainNode created.");
             }
 
             // --- 重新连接 *源* 节点 ---
@@ -1825,8 +1825,8 @@
             if (mediaElementSource) {
                 try {
                     mediaElementSource.disconnect();
-                    console.log("已断开旧的 MediaElementSource。");
-                } catch (e) { console.warn("断开旧源时出现小错误:", e); }
+                    console.log("Disconnected old MediaElementSource.");
+                } catch (e) { console.warn("Minor error disconnecting old source:", e); }
                 mediaElementSource = null; // 清除引用
             }
 
@@ -1834,18 +1834,18 @@
             try {
                 // 直接从新的 videoElement 创建
                 mediaElementSource = audioContext.createMediaElementSource(videoElement);
-                console.log("为 video 创建了新的 MediaElementSource:", videoElement);
+                console.log("Created new MediaElementSource for video:", videoElement);
             } catch (sourceError) { // 处理创建错误 (例如元素没有音轨)
-                console.error("创建 MediaElementSource 时出错:", sourceError);
+                console.error("Error creating MediaElementSource:", sourceError);
                 // 尝试使用 captureStream 作为备选方案
                 if (videoElement.captureStream && getVideoAudioTracks(videoElement).length > 0) {
-                    console.log("尝试使用 captureStream() 作为备选方案。");
+                    console.log("Attempting to use captureStream() as a fallback.");
                     try {
                         const mediaStream = videoElement.captureStream();
                         mediaElementSource = audioContext.createMediaStreamSource(mediaStream);
-                        console.log("已从 captureStream 创建备选 MediaStreamSource。");
+                        console.log("Created fallback MediaStreamSource from captureStream.");
                     } catch (fallbackErr) {
-                        console.error("captureStream() 备选方案也失败了:", fallbackErr);
+                        console.error("captureStream() fallback also failed:", fallbackErr);
                         throw sourceError; // 如果备选失败，重新抛出原始错误
                     }
                 } else {
@@ -1860,17 +1860,17 @@
             gainNode.connect(destination); // 连接到录音器使用的目标！
             gainNode.connect(audioContext.destination); // 连接到实际扬声器
 
-            console.log("音频节点已重新连接。");
+            console.log("Audio nodes reconnected.");
             updateGain(); // 应用当前的音量/静音设置
 
-            // *** 重要：更新跟踪的视频元素引用 ***
+            // *** 更新跟踪的视频元素引用 ***
             currentVideoElement = videoElement;
-            console.log("跟踪的视频元素已更新。");
+            console.log("Tracked video element updated.");
 
             return true; // 初始化/重新初始化成功
 
         } catch (error) {
-            console.error("音频初始化/重新初始化期间出错:", error);
+            console.error("Error during audio initialization/reinitialization:", error);
             // 清理可能部分创建的 *源* 节点
             if (mediaElementSource) { try { mediaElementSource.disconnect(); } catch (e) { } mediaElementSource = null; }
             // 不要销毁 gainNode 和 destination，它们可能可以重用
@@ -1962,7 +1962,7 @@
             console.log(`MediaRecorders created${options.mimeType ? ' with type: ' + options.mimeType : ' with default type'}.`);
         } catch (e) {
             console.error("Error creating MediaRecorder:", e);
-            alert(`错误：无法创建音频录制器。浏览器可能不支持所需功能或音频流无效。\n${e.message}`);
+            alert(`Error: Could not create audio recorder. Browser may not support required features or audio stream is invalid.\n${e.message}`);
             stopAgent(); // 创建失败则停止代理
             return; // 停止进程
         }
@@ -2058,7 +2058,7 @@
 
             // 如果代理仍在运行，尝试检查视频元素并重新初始化音频系统作为恢复手段
             if (isAgentRunning) {
-                console.warn(`录制器错误发生，尝试检查视频元素并恢复...`);
+                console.warn(`Recorder error occurred, attempting to check video element and recover...`);
                 checkForVideoReplacement(); // 调用检查函数，它会处理后续逻辑
             }
         };
@@ -2137,7 +2137,7 @@
 
         } catch (startError) {
             console.error(`Error starting ${label}:`, startError);
-            alert(`启动音频录制器 ${label} 失败: ${startError.message}`);
+            alert(`Failed to start audio recorder ${label} startError.message: ${startError.message}`);
             // 标记为非活动
             if (recorderToStart === mediaRecorder1) isRecorder1Active = false;
             else isRecorder2Active = false;
@@ -2342,18 +2342,18 @@
         // --- 获取主播名字 ---
         const streamerName = currentPlatformAdapter.getStreamerName?.() || null;
         if (streamerName === null) {
-            console.warn('[Send Data] 没有成功获取当前 Streamer 用户名')
+            console.warn('[Send Data] Failed to get current Streamer username')
         }
 
         // --- 3. 检查是否有有效数据发送 ---
         if ((!audioBlob || audioBlob.size === 0) && chatsForThisInterval.length === 0 && !screenshotBlob) {
-            console.log("[Send Data] 没有有效数据（音频、过滤后的聊天、截图）需要发送。");
+            console.log("[Send Data] No valid data (audio, filtered chat, screenshot) to send.");
             return; // 没有可发送的数据，直接返回
         }
 
         // --- 4. 处理音频累积逻辑 (与之前类似，但针对 audioBlob) ---
         if (isSending) {
-            console.log('[Send Data] 上一个请求正在进行中。累积音频块 (如果存在)...');
+            console.log('[Send Data] Previous request in progress. Accumulating audio chunk (if it exists)...');
             if (audioBlob && audioBlob.size > 0) {
                 if (!isAccumulating) {
                     accumulatedChunks = [audioBlob]; // 开始新的累积
@@ -2369,11 +2369,11 @@
         // 合并累积的音频块
         let finalAudioBlob = audioBlob;
         if (isAccumulating && accumulatedChunks.length > 0) {
-            console.log(`[Send Data] 合并 ${accumulatedChunks.length} 个累积的音频块与当前块 (如果有)。`);
+            console.log(`[Send Data] Merging ${accumulatedChunks.length} accumulated audio chunks with current chunk (if any).`);
             const chunksToMerge = audioBlob ? [audioBlob, ...accumulatedChunks] : [...accumulatedChunks];
             if (chunksToMerge.length > 0) {
                 finalAudioBlob = new Blob(chunksToMerge, { type: chunksToMerge[0].type });
-                console.log(`[Send Data] 合并后的音频 Blob 大小: ${finalAudioBlob.size} bytes`);
+                console.log(`[Send Data] Merged audio Blob size: ${finalAudioBlob.size} bytes`);
             } else {
                 finalAudioBlob = null;
             }
@@ -2385,7 +2385,7 @@
         isSending = true; // 设置发送锁
         const dataSize = finalAudioBlob ? finalAudioBlob.size : 0;
         const screenshotSize = screenshotBlob ? screenshotBlob.size : 0;
-        console.log(`[Send Data] 准备发送数据。音频: ${dataSize} bytes, 聊天: ${chatsForThisInterval.length}, 截图: ${screenshotSize} bytes, 主播用户名: ${streamerName}`);
+        console.log(`[Send Data] Preparing to send data. Audio: ${dataSize} bytes, Chat: ${chatsForThisInterval.length}, Screenshot: ${screenshotSize} bytes, Streamer Username: ${streamerName}`);
 
         const formData = new FormData();
         if (finalAudioBlob && finalAudioBlob.size > 0) {
@@ -2458,7 +2458,7 @@
 
                 // --- 处理累积音频 (XHR 完成后) ---
                 if (isAccumulating && accumulatedChunks.length > 0) {
-                    console.log("[Send Data] 在发送完成后处理累积的音频块。");
+                    console.log("[Send Data] Processing accumulated audio chunks after send completion.");
                     const nextBlob = accumulatedChunks.shift(); // 取出第一个
                     if (accumulatedChunks.length === 0) isAccumulating = false; // 更新状态
 
@@ -2470,13 +2470,13 @@
                         // 或者，更好的是，将累积块与下一个常规块一起发送。
                         // 当前实现是在 isSending 为 false 后，如果有累积块则立即发送。
                         // 这意味着它没有最新的聊天/截图。
-                        console.warn("[Send Data] 立即发送累积的音频块，无关联的聊天/截图。");
+                        console.warn("[Send Data] Sending accumulated audio chunk immediately, no associated chat/screenshot.");
                         // 注意：调用 sendDataToServer 时，时间戳参数可能无意义或需要特殊处理
                         // 为了简单，这里传递 0 或一个标记，后端需要能处理这种情况。
                         // 这里我们还是用上次的时间戳，虽然不精确。
                         sendDataToServer(nextBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, null);
                     } else {
-                        console.warn("[Send Data] 累积队列状态异常。");
+                        console.warn("[Send Data] Accumulated queue state is abnormal.");
                         isAccumulating = false; // 重置状态
                     }
                 } // 结束处理累积音频
@@ -2488,11 +2488,11 @@
             isSending = false; // **释放锁**
             // 处理累积音频
             if (isAccumulating && accumulatedChunks.length > 0) {
-                console.log("[Send Data] 网络错误后处理累积的块。");
+                console.log("[Send Data] Sending accumulated audio, no associated chat/screenshot.");
                 const nextBlob = accumulatedChunks.shift();
                 if (accumulatedChunks.length === 0) isAccumulating = false;
                 if (nextBlob) {
-                    console.warn("[Send Data] 发送累积音频，无关联聊天/截图。");
+                    console.warn("[Send Data] Sending accumulated audio, no associated chat/screenshot.");
                     sendDataToServer(nextBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, null);
                 } else { isAccumulating = false; }
             }
@@ -2502,11 +2502,11 @@
             isSending = false; // **释放锁**
             // 处理累积音频
             if (isAccumulating && accumulatedChunks.length > 0) {
-                console.log("[Send Data] 请求超时后处理累积的块。");
+                console.log("[Send Data] Processing accumulated chunks after request timeout.");
                 const nextBlob = accumulatedChunks.shift();
                 if (accumulatedChunks.length === 0) isAccumulating = false;
                 if (nextBlob) {
-                    console.warn("[Send Data] 发送累积音频，无关联聊天/截图。");
+                    console.warn("[Send Data] Sending accumulated audio, no associated chat/screenshot.");
                     sendDataToServer(nextBlob, currentRecordingStartTimestamp, currentRecordingEndTimestamp, null);
                 } else { isAccumulating = false; }
             }
@@ -2712,8 +2712,8 @@
     }
 
     /**
- * 启动 MutationObserver 来观察视频元素的替换。
- */
+     * 启动 MutationObserver 来观察视频元素的替换。
+     */
     function startVideoReplacementObserver() {
         if (videoReplacementObserver) return; // 已经在运行
 
@@ -2732,9 +2732,9 @@
 
         try {
             videoReplacementObserver.observe(targetNode, config);
-            console.log("%cAI Agent: 视频替换监视器已启动。", "color: orange;");
+            console.log("%cAI Agent: Video replacement observer started.", "color: orange;");
         } catch (e) {
-            console.error("启动视频替换监视器失败:", e);
+            console.error("Failed to start video replacement observer:", e);
             videoReplacementObserver = null;
         }
     }
@@ -2746,7 +2746,7 @@
         if (videoReplacementObserver) {
             videoReplacementObserver.disconnect();
             videoReplacementObserver = null;
-            console.log("%cAI Agent: 视频替换监视器已停止。", "color: orange;");
+            console.log("%cAI Agent: Video replacement observer stopped.", "color: orange;");
         }
     }
 
@@ -2764,7 +2764,7 @@
         if (!newVideoElement) {
             if (currentVideoElement) {
                 // 之前有跟踪的元素，但现在找不到了
-                console.warn("跟踪的视频元素丢失，且未找到新的。");
+                console.warn("Tracked video element lost, and no new one found.");
                 // 可以选择停止代理或等待。这里先清除引用并等待。
                 currentVideoElement = null;
             }
@@ -2781,9 +2781,9 @@
 
         if (!currentVideoElement || oldElementLost || foundDifferentElement) {
             // 打印原因，方便调试
-            if (oldElementLost) console.log("检测到跟踪的视频元素已断开连接。");
-            else if (foundDifferentElement && currentVideoElement) console.log("检测到不同的视频元素。");
-            else if (!currentVideoElement) console.log("检测到初始/新的视频元素。");
+            if (oldElementLost) console.log("Detected that the tracked video element has been disconnected.");
+            else if (foundDifferentElement && currentVideoElement) console.log("Detected a different video element.");
+            else if (!currentVideoElement) console.log("Detected initial/new video element.");
 
             // 调用重新初始化流程
             reinitializeAudioSystem(newVideoElement);
@@ -2799,18 +2799,18 @@
     function reinitializeAudioSystem(newVideoElement) {
         // 再次检查代理是否仍在运行
         if (!isAgentRunning) {
-            console.warn("代理已停止，跳过音频重新初始化。");
+            console.warn("Agent stopped, skipping audio reinitialization.");
             return;
         }
-        console.log("%cAI Agent: 正在为新的视频元素重新初始化音频系统...", "color: blue; font-weight: bold;");
+        console.log("%cAI Agent: Reinitializing audio system for new video element...", "color: blue; font-weight: bold;");
 
         // 尝试重新初始化音频连接 (这个函数会更新 currentVideoElement)
         if (initializeAudio(newVideoElement)) {
             // 如果成功，通常不需要重启 MediaRecorder，因为它们连接的是 destination.stream
-            console.log("%cAI Agent: 音频系统成功重新初始化。", "color: blue;");
+            console.log("%cAI Agent: Audio system reinitialized successfully.", "color: blue;");
         } else {
             // 如果重新初始化失败，这可能是一个严重问题
-            console.error("重新初始化音频系统失败。代理可能停止捕获音频！");
+            console.error("Failed to reinitialize audio system. Agent might stop capturing audio!");
             // 可以考虑在这里停止代理，防止后续错误
             // stopAgent();
         }
@@ -2820,7 +2820,7 @@
     * 集中清理音频相关资源。
     */
     function cleanupAudioResources() {
-        console.log("正在清理音频资源...");
+        console.log("Cleaning up audio resources...");
 
         // 停止可能仍在运行的录制器 (以防万一)
         if (mediaRecorder1 && mediaRecorder1.state !== 'inactive') try { mediaRecorder1.stop() } catch (e) {/*忽略停止错误*/ }
@@ -2845,10 +2845,10 @@
         mediaElementSource = null; // 源总是需要清除
         gainNode = null;           // gainNode 也清除
 
-        console.log("音频资源已清理。");
+        console.log("Audio resources cleaned up.");
     }
 
     // --- 脚本入口点 ---
-    console.log("Live Stream Chat AI Agent script loaded (Refactored).");
+    console.log("Live Stream Chat AI Agent script loaded.");
 
 })(); // IIFE 结束
