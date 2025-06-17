@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Live Stream Chat AI Agent
 // @name:zh-CN   直播聊天室AI智能代理
-// @version      1.4.0
+// @version      1.5.0
 // @description  An AI script for automatically sending chat messages and interacting with streamers on multiple platforms (YouTube, twitch, Bilibili). Records audio, chat, and screenshots, sends to backend for AI processing, and posts responses automatically.
 // @description:zh-CN  一个基于 AI 的脚本，用于在多个直播平台(YouTube, twitch, Bilibili) 自动发送弹幕消息并与主播互动。录制音频、弹幕、直播间画面，发送到后端进行 AI 处理，并自动发布 AI 生成的聊天内容。
 // @description:zh-TW  一個基於人工智慧的腳本，用於在多個直播平台(YouTube, twitch, Bilibili) 自動發送聊天室訊息並與主播互動。錄製音訊、彈幕和直播畫面，傳送到後端進行 AI 處理，並自動發佈聊天室內容。
 // @description:zh-HK  一個基於人工智能的腳本，用於在多個直播平台(YouTube, twitch, Bilibili) 自動發送聊天室訊息並與主播互動。錄製音訊、彈幕及直播畫面，傳送至後台進行 AI 分析處理，並自動發佈聊天室內容。
-// @author       bOc
+// @author       bOOOOc
 // @match        https://live.bilibili.com/*
 // @match        https://www.youtube.com/watch*
 // @match        https://www.twitch.tv/*
@@ -18,7 +18,8 @@
     'use strict';
 
     // --- 常量定义 ---
-    const API_ENDPOINT = 'https://your_server_address:8181/upload'; // 后端 API 地址
+    const INFERENCE_SERVICE_URL = 'https://your_server_address:8181/v1/infer'; // 后端 API 地址
+    const INFERENCE_SERVICE_API_KEY = 'a-secret-key-between-worker-and-inference'; // 后端 API Key
     const RECORDING_INTERVAL_MS = 30000; // 30 秒 - 录制分块时长
     const MAX_CHAT_LENGTH = 20; // 每条弹幕消息分段的最大长度 (默认值 一般会被已知平台的最优值替代)
     const FORCE_CHAT_LENGTH = 0; // 0 = 不强制，如果大于0，比如10，就强制每10字符切割为一个弹幕
@@ -2408,8 +2409,11 @@
 
         // --- 6. 使用 XMLHttpRequest 发送 ---
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', API_ENDPOINT, true);
+        // 使用常量 INFERENCE_SERVICE_URL 作为请求地址
+        xhr.open('POST', INFERENCE_SERVICE_URL, true);
         xhr.timeout = 90000;
+        // 设置 API Key 请求头
+        xhr.setRequestHeader('X-Api-Key', INFERENCE_SERVICE_API_KEY);
 
         xhr.onreadystatechange = function () {
             if (xhr.readyState === 4) {
