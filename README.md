@@ -15,7 +15,7 @@ This project enables an AI to act as a viewer in live streams. It captures strea
 It consists of two main parts:
 
 1.  **Frontend Userscript:** Runs in your browser (via Tampermonkey/Violentmonkey) on live stream pages. It captures audio, chat messages, and screenshots, displays a control panel, and communicates with the backend.
-2.  **Backend Server:** A Python Flask server that receives data, performs Speech-to-Text (STT), optionally uploads screenshots, interacts with an LLM, manages conversation memory, and sends back generated chat messages.
+2.  **Backend Server:** A modular Python Flask server with independent service layers: State Management Service, External APIs Service, and LLM Service. It receives data, performs Speech-to-Text (STT), optionally uploads screenshots, interacts with an LLM, manages conversation memory, and sends back generated chat messages.
 
 ## Key Features
 
@@ -42,7 +42,7 @@ It consists of two main parts:
 ## Technologies
 
 *   **Frontend:** JavaScript (ES6+), Web Audio API, MediaRecorder API, Canvas API, DOM Manipulation
-*   **Backend:** Python 3, Flask, Requests, OpenAI Python Library, Pillow, Cloudinary Python SDK (optional), python-dotenv, Tiktoken
+*   **Backend:** Python 3, Flask, Flask-CORS, Requests, OpenAI Python Library, Pillow, Cloudinary Python SDK (optional), python-dotenv, Tiktoken
 *   **AI Services:** OpenAI-compatible LLM API, Youdao ASR API (optional), Whisper (optional)
 *   **Userscript Manager:** Tampermonkey or Violentmonkey
 
@@ -60,8 +60,8 @@ It consists of two main parts:
 
 ## Quick Start
 
-1.  **Backend Setup:** Clone repo, install Python dependencies (`pip install -r requirements.txt`), configure API keys in `.env` (copy from `.env.example`), run `python server.py`. (See [**Backend Setup**](docs/TUTORIAL.md#backend-server-setup))
-2.  **Frontend Setup:** Install Tampermonkey/Violentmonkey, install the `.user.js` script, ensure `API_ENDPOINT` in the script matches your backend address. (See [**Frontend Setup**](docs/TUTORIAL.md#frontend-userscript-setup))
+1.  **Backend Setup:** Clone repo, install Python dependencies (`pip install -r requirements.txt`), configure API keys in `.env` (copy from `.env.example`), run `python src/app.py`. (See [**Backend Setup**](docs/TUTORIAL.md#backend-server-setup))
+2.  **Frontend Setup:** Install Tampermonkey/Violentmonkey, install the `.user.js` script, ensure `INFERENCE_SERVICE_URL` and `INFERENCE_SERVICE_API_KEY` in the script match your backend configuration. (See [**Frontend Setup**](docs/TUTORIAL.md#frontend-userscript-setup))
 3.  **Usage:** Go to a supported live stream, use the control panel to start the agent. (See [**Usage Guide**](docs/TUTORIAL.md#usage))
 
 **➡️ For detailed steps, please read the [Full Tutorial (TUTORIAL.md)](docs/TUTORIAL.md)**
@@ -69,13 +69,27 @@ It consists of two main parts:
 ## Project Structure
 ```
 .
-├── backend/          # Server code and related files
-├── frontend/         # Userscript code
-├── docs/             # Documentation and images
-├── README.md         # This file (English)
-├── README.zh-CN.md   # Chinese Readme
-├── LICENSE           # AGPL-3.0 License file
-└── .gitignore        # Git ignore rules
+├── backend/                # Server code and related files
+│   ├── src/               # Source code directory
+│   │   ├── app.py         # Flask application main entry
+│   │   ├── services/      # Service layer
+│   │   │   ├── external_apis.py  # External API integration service
+│   │   │   ├── llm_service.py    # LLM processing service
+│   │   │   └── state_service.py  # State management service
+│   │   └── utils/         # Utility modules
+│   │       └── config.py  # Configuration management
+│   ├── memory/            # Persistent memory storage
+│   ├── prompts/           # System prompt files
+│   ├── requirements.txt   # Python dependencies
+│   └── .env.example       # Environment configuration example
+├── frontend/              # Userscript code
+│   └── live-stream-chat-ai-agent.user.js
+├── docs/                  # Documentation and images
+├── tools/                 # Helper tools
+├── README.md              # This file (English)
+├── README.zh-CN.md        # Chinese Readme
+├── LICENSE                # AGPL-3.0 License file
+└── .gitignore             # Git ignore rules
 ```
 
 ## Contributing

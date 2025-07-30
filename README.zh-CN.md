@@ -15,7 +15,7 @@
 主要包含两部分：
 
 1.  **前端用户脚本:** 通过油猴 (Tampermonkey) 或暴力猴 (Violentmonkey) 在浏览器中的直播页面运行。负责捕获音频、弹幕、截图，显示控制面板，并与后端通信。
-2.  **后端服务器:** Python Flask 服务器，接收数据、执行语音转文本 (STT)、可选上传截图、与 LLM 交互、管理对话记忆，并发送回 AI 生成的弹幕消息。
+2.  **后端服务器:** 采用模块化架构的 Python Flask 服务器，包含独立的服务层：状态管理服务、外部 API 服务、LLM 服务。负责接收数据、执行语音转文本 (STT)、可选上传截图、与 LLM 交互、管理对话记忆，并发送回 AI 生成的弹幕消息。
 
 ## 主要功能
 
@@ -42,7 +42,7 @@
 ## 技术栈
 
 *   **前端:** JavaScript (ES6+), Web Audio API, MediaRecorder API, Canvas API, DOM 操作
-*   **后端:** Python 3, Flask, Requests, OpenAI Python Library, Pillow, Cloudinary Python SDK (可选), python-dotenv, Tiktoken
+*   **后端:** Python 3, Flask, Flask-CORS, Requests, OpenAI Python Library, Pillow, Cloudinary Python SDK (可选), python-dotenv, Tiktoken
 *   **AI 服务:** OpenAI 兼容的 LLM API, 有道智云 ASR API (可选), Whisper (可选)
 *   **用户脚本管理器:** Tampermonkey 或 Violentmonkey
 
@@ -60,8 +60,8 @@
 
 ## 快速开始
 
-1.  **后端设置:** 克隆仓库, 安装 Python 依赖 (`pip install -r requirements.txt`), 在 `.env` 文件中配置 API 密钥 (从 `.env.example` 复制), 运行 `python server.py`。 (详见 [**后端设置**](docs/TUTORIAL.zh-CN.md#后端服务器设置))
-2.  **前端设置:** 安装 Tampermonkey/Violentmonkey, 安装 `.user.js` 脚本, 确保脚本中的 `API_ENDPOINT` 与你的后端地址匹配。 (详见 [**前端设置**](docs/TUTORIAL.zh-CN.md#前端用户脚本设置))
+1.  **后端设置:** 克隆仓库, 安装 Python 依赖 (`pip install -r requirements.txt`), 在 `.env` 文件中配置 API 密钥 (从 `.env.example` 复制), 运行 `python src/app.py`。 (详见 [**后端设置**](docs/TUTORIAL.zh-CN.md#后端服务器设置))
+2.  **前端设置:** 安装 Tampermonkey/Violentmonkey, 安装 `.user.js` 脚本, 确保脚本中的 `INFERENCE_SERVICE_URL` 和 `INFERENCE_SERVICE_API_KEY` 与你的后端配置匹配。 (详见 [**前端设置**](docs/TUTORIAL.zh-CN.md#前端用户脚本设置))
 3.  **使用:** 访问支持的直播间，使用控制面板启动代理。 (详见 [**使用指南**](docs/TUTORIAL.zh-CN.md#使用方法))
 
 **➡️ 获取详细步骤，请阅读 [完整教程 (TUTORIAL.zh-CN.md)](docs/TUTORIAL.zh-CN.md)**
@@ -69,13 +69,27 @@
 ## 项目结构
 ```
 .
-├── backend/          # 服务器代码及相关文件
-├── frontend/         # 用户脚本代码
-├── docs/             # 文档和图片
-├── README.md         # 英文说明
-├── README.zh-CN.md   # 本文件 (中文说明)
-├── LICENSE           # AGPL-3.0 许可证文件
-└── .gitignore        # Git 忽略规则
+├── backend/                # 服务器代码及相关文件
+│   ├── src/               # 源代码目录
+│   │   ├── app.py         # Flask 应用主入口
+│   │   ├── services/      # 服务层
+│   │   │   ├── external_apis.py  # 外部 API 集成服务
+│   │   │   ├── llm_service.py    # LLM 处理服务
+│   │   │   └── state_service.py  # 状态管理服务
+│   │   └── utils/         # 工具模块
+│   │       └── config.py  # 配置管理
+│   ├── memory/            # 持久化记忆存储
+│   ├── prompts/           # 系统提示词文件
+│   ├── requirements.txt   # Python 依赖
+│   └── .env.example       # 环境配置示例
+├── frontend/              # 用户脚本代码
+│   └── live-stream-chat-ai-agent.user.js
+├── docs/                  # 文档和图片
+├── tools/                 # 辅助工具
+├── README.md              # 英文说明
+├── README.zh-CN.md        # 本文件 (中文说明)
+├── LICENSE                # AGPL-3.0 许可证文件
+└── .gitignore             # Git 忽略规则
 ```
 
 ## 贡献

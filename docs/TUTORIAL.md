@@ -44,6 +44,7 @@ Before you begin, ensure you have the following:
     *   **For Server Deployment:** `Certbot`. Tool for obtaining free, trusted SSL certificates from Let's Encrypt. Requires a **domain name** pointing to your server's public IP and usually **root/sudo access**. Port 80 must be open temporarily for certificate validation. Install Certbot following official instructions for your OS ([Certbot Instructions](https://certbot.eff.org/)).
 8.  **API Keys & Credentials:**
     *   **LLM API:** OpenAI-compatible API Key and Base URL (**Required**).
+    *   **Inference Service API Key:** API key for authentication between frontend and backend (**Required**), must be configured with the same value in both the frontend script and backend `.env`.
     *   **Youdao AI Cloud (Required if using Youdao STT):** Get Application Key (`YOUDAO_APP_KEY`) and Application Secret (`YOUDAO_APP_SECRET`) from [Youdao AI Cloud website](https://ai.youdao.com/) for the **Short Audio Recognition API** (实时语音转写 - 短语音版). Ensure your account has access to this specific API.
     *   **Cloudinary (Optional for Vision):** Cloud Name, API Key, API Secret from [Cloudinary](https://cloudinary.com/).
 
@@ -87,6 +88,8 @@ pip install -r requirements.txt
 
 1.  **Copy Example:** `cp .env.example .env` (Linux/macOS) or `copy .env.example .env` (Windows).
 2.  **Edit `.env`:** Open `.env` in a text editor and fill in your details. Pay **close attention** to:
+    *   `INFERENCE_SERVICE_API_KEY` (**Required**) - API key for frontend-backend authentication, the `INFERENCE_SERVICE_API_KEY` in the frontend script must match this value **exactly**
+    *   `LLM_PROVIDER` (**Required**) - LLM service provider (e.g., openai, azure, claude, gemini, deepseek, etc.)
     *   `LLM_API_KEY`, `LLM_API_URL`, `LLM_API_MODEL` (**Required**)
     *   **STT Provider Settings:**
         *   `STT_PROVIDER`: Set to `youdao` (or `both` if applicable) to use Youdao Short Audio Recognition.
@@ -190,11 +193,11 @@ Run `ffmpeg -version` in terminal (venv active). Double-check `FFMPEG_PATH` in `
 Ensure venv active (`(venv)` prefix). Start the Flask server:
 
 ```bash
-python server.py
+python src/app.py
 ```
 
-*   If `SERVER_ENABLE_SSL=true`, it listens on `https://<SERVER_HOST>:<SERVER_PORT>`.
-*   If `false`, it listens on `http://<SERVER_HOST>:<SERVER_PORT>`.
+*   If `SERVER_ENABLE_SSL=true`, it provides API service at `https://<SERVER_HOST>:<SERVER_PORT>/v1/infer`.
+*   If `false`, it provides API service at `http://<SERVER_HOST>:<SERVER_PORT>/v1/infer`.
 
 Keep this terminal open. `Ctrl+C` to stop. Note the exact HTTPS or HTTP address; you'll need it for the frontend.
 
@@ -212,25 +215,29 @@ Install Tampermonkey/Violentmonkey if you haven't.
 #### 3. Configure & Verify API Endpoint
 
 1.  Go to Tampermonkey/Violentmonkey dashboard. Ensure "Live Stream Chat AI Agent" is enabled.
-2.  **CRITICAL:** Edit the script. Find `API_ENDPOINT` near the top.
+2.  **CRITICAL:** Edit the script. Find `INFERENCE_SERVICE_URL` and `INFERENCE_SERVICE_API_KEY` near the top.
     ```javascript
-    // ** MUST MATCH YOUR BACKEND SERVER ADDRESS EXACTLY **
+    // --- Constants ---
+    const INFERENCE_SERVICE_URL = 'https://your_server_address:8181/v1/infer'; // Backend API address
+    const INFERENCE_SERVICE_API_KEY = 'a-secret-key-between-worker-and-inference'; // Backend API Key
+    
+    // ** MUST MATCH YOUR BACKEND SERVER CONFIGURATION EXACTLY **
     // Example (Local, mkcert - Use localhost!):
-    // const API_ENDPOINT = 'https://localhost:8181/upload';
+    // const INFERENCE_SERVICE_URL = 'https://localhost:8181/v1/infer';
     // Example (Server, Let's Encrypt):
-    // const API_ENDPOINT = 'https://myagent.mydomain.com:8181/upload';
+    // const INFERENCE_SERVICE_URL = 'https://myagent.mydomain.com:8181/v1/infer';
     // Example (HTTP, Not Recommended):
-    // const API_ENDPOINT = 'http://localhost:8181/upload'; // Or http://specific-ip:port
-
-    const API_ENDPOINT = 'PASTE_YOUR_BACKEND_URL_HERE/upload'; // <-- EDIT THIS LINE
+    // const INFERENCE_SERVICE_URL = 'http://localhost:8181/v1/infer'; // Or http://specific-ip:port
     ```
-3.  **VERY IMPORTANT:** Set the `API_ENDPOINT` value to EXACTLY match the address where your backend server is running:
+3.  **VERY IMPORTANT:** 
+    *   Set the `INFERENCE_SERVICE_URL` value to EXACTLY match the address where your backend server is running:
+    *   Set the `INFERENCE_SERVICE_API_KEY` value to match the value configured in your `.env` file **exactly**
     *   Use `https://` if `SERVER_ENABLE_SSL=true`.
     *   Use `http://` if `SERVER_ENABLE_SSL=false` (Remember browser limitations).
     *   **If using `mkcert` locally, you MUST use `https://localhost:PORT`**. Do not use `127.0.0.1` as browsers handle certificates for `localhost` differently and more reliably.
     *   If using `Certbot`/Let's Encrypt on a server, use `https://yourdomain.com:PORT`.
     *   Ensure the `PORT` matches `SERVER_PORT` in `.env`.
-    *   The path `/upload` should generally be kept unless you modify `server.py`.
+    *   The API path is now `/v1/infer`, not `/upload`.
 4.  Save the script.
 
 ### Usage
@@ -265,22 +272,27 @@ With backend running and userscript configured:
 #### Monitoring
 
 *   **Browser Console (F12):** Look for `AI Agent:` logs (frontend). Check for Network errors (CORS, Mixed Content, Failed fetch).
-*   **Backend Terminal:** Detailed logs from `server.py` (requests, STT, LLM, errors).
+*   **Backend Terminal:** Detailed logs from `src/app.py` (requests, STT, LLM, errors).
 
 ### Troubleshooting
 
 *   **Panel Doesn't Appear:** Userscript enabled? Correct page URL? Console (F12) errors?
 *   **"Start" Disabled:** Turn "Control Switch" ON. Wait for video detection (console).
 *   **Agent Errors on Start/Run (Network/Connection):**
-    *   **MOST COMMON:** Check Browser Console (F12) for Network errors: `Failed to fetch`, `TypeError: NetworkError`, `Mixed Content`, `CORS policy`.
-    *   **VERIFY `API_ENDPOINT`:** Double/triple-check the `API_ENDPOINT` in the userscript matches the **exact** backend address (`https://` vs `http://`, domain/IP/localhost, port). **Crucially, if using `mkcert` locally, ensure you are using `https://localhost:PORT` and NOT `https://127.0.0.1:PORT`**.
+    *   **MOST COMMON:** Check Browser Console (F12) for Network errors: `Failed to fetch`, `TypeError: NetworkError`, `Mixed Content`, `CORS policy`, `401 Unauthorized` (API key mismatch).
+    *   **VERIFY API Configuration:** 
+        *   Double/triple-check the `INFERENCE_SERVICE_URL` in the userscript matches the **exact** backend address (`https://` vs `http://`, domain/IP/localhost, port).
+        *   Check that `INFERENCE_SERVICE_API_KEY` matches the value in `.env` **exactly**.
+        *   **Crucially, if using `mkcert` locally, ensure you are using `https://localhost:PORT` and NOT `https://127.0.0.1:PORT`**.
     *   **SSL Issues (HTTPS):**
-        *   *Local (mkcert):* Did `mkcert -install` run successfully? Is the `API_ENDPOINT` correctly set to `https://localhost:PORT`? Browser might show certificate warnings if the CA isn't trusted or if using the wrong hostname. Try accessing the `API_ENDPOINT` directly in a browser tab - accept security exception if prompted (for local testing only on `localhost`).
+        *   *Local (mkcert):* Did `mkcert -install` run successfully? Is the `INFERENCE_SERVICE_URL` correctly set to `https://localhost:PORT/v1/infer`? Browser might show certificate warnings if the CA isn't trusted or if using the wrong hostname. Try accessing the `INFERENCE_SERVICE_URL` directly in a browser tab - accept security exception if prompted (for local testing only on `localhost`).
         *   *Server (Certbot):* Is the certificate valid (not expired)? Can the Python process *read* the certificate files (`/etc/letsencrypt/live/...`)? Check file permissions. Did Certbot renewal fail? Is port 443 (or your custom SSL port) open on the server firewall?
-    *   **Backend Not Running:** Is the `python server.py` process still active in its terminal? Any errors there?
+    *   **Backend Not Running:** Is the `python src/app.py` process still active in its terminal? Any errors there?
     *   **Firewall:** Is a firewall blocking the connection (either on server or client)?
 *   **Backend Errors (Check Terminal):**
-    *   **API Keys:** Invalid/missing LLM or Youdao keys in `.env`.
+    *   **API Keys:** 
+        *   Invalid/missing LLM or Youdao keys in `.env`.
+        *   `INFERENCE_SERVICE_API_KEY` doesn't match the value in the frontend script (causes 401 errors).
     *   **Youdao STT Errors:** Incorrect App Key/Secret? Exceeded quota? Network issue reaching Youdao? FFmpeg conversion failed? (Check FFmpeg errors).
     *   **SSL File Errors:** Backend cannot find/read certificate/key specified in `.env`. Check `SSL_CERT_PATH`, `SSL_KEY_PATH` and file permissions.
     *   **Other Python Errors:** Read the traceback.

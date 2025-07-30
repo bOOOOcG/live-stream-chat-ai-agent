@@ -44,6 +44,7 @@
     *   **服务器部署用:** `Certbot`。用于从 Let's Encrypt 获取免费、受信任的 SSL 证书。需要一个指向您服务器公网 IP 的**域名**，通常需要**服务器 root/sudo 权限**。端口 80 必须临时开放用于证书验证。按照您操作系统的官方指南安装 Certbot ([Certbot 指南](https://certbot.eff.org/))。
 8.  **API 密钥和凭证:**
     *   **LLM API:** OpenAI 兼容的 API 密钥和基础 URL (**必需**)。
+    *   **推理服务 API 密钥:** 用于前后端通信认证的 API 密钥 (**必需**)，需要在前端脚本和后端 `.env` 中配置相同的值。
     *   **有道智云 (若使用有道 STT 则必需):** 从[有道智云网站](https://ai.youdao.com/)获取**实时语音转写 - 短语音版**的应用 ID (`YOUDAO_APP_KEY`) 和应用密钥 (`YOUDAO_APP_SECRET`)。确保您的账户有权访问此特定 API。
     *   **Cloudinary (视觉功能可选):** 从 [Cloudinary](https://cloudinary.com/) 获取 Cloud Name, API Key, API Secret。
 
@@ -87,6 +88,8 @@ pip install -r requirements.txt
 
 1.  **复制示例文件:** `cp .env.example .env` (Linux/macOS) 或 `copy .env.example .env` (Windows)。
 2.  **编辑 `.env`:** 使用文本编辑器打开 `.env` 并填写您的信息。请**特别注意**：
+    *   `INFERENCE_SERVICE_API_KEY` (**必需**) - 用于前后端通信认证的 API 密钥，前端脚本中的 `INFERENCE_SERVICE_API_KEY` 必须与此处设置的值**完全一致**
+    *   `LLM_PROVIDER` (**必需**) - LLM 服务提供商（如 openai, azure, claude, gemini, deepseek 等）
     *   `LLM_API_KEY`, `LLM_API_URL`, `LLM_API_MODEL` (**必需**)
     *   **STT 提供商设置:**
         *   `STT_PROVIDER`: 设置为 `youdao` (或 `both` 如果适用) 以使用有道短语音识别。
@@ -190,7 +193,7 @@ pip install -r requirements.txt
 确保 venv 已激活 (`(venv)` 前缀)。启动 Flask 服务器：
 
 ```bash
-python server.py
+python src/app.py
 ```
 
 *   如果 `SERVER_ENABLE_SSL=true`，它将在 `https://<SERVER_HOST>:<SERVER_PORT>` 上监听。
@@ -212,25 +215,29 @@ python server.py
 #### 3. 配置并验证 API 端点
 
 1.  转到 Tampermonkey/Violentmonkey 仪表板。确保 "Live Stream Chat AI Agent" 已启用。
-2.  **关键步骤:** 编辑该脚本。找到靠近顶部的 `API_ENDPOINT`。
+2.  **关键步骤:** 编辑该脚本。找到靠近顶部的 `INFERENCE_SERVICE_URL` 和 `INFERENCE_SERVICE_API_KEY`。
     ```javascript
-    // ** 必须与您的后端服务器地址完全匹配 **
+    // --- 常量定义 ---
+    const INFERENCE_SERVICE_URL = 'https://your_server_address:8181/v1/infer'; // 后端 API 地址
+    const INFERENCE_SERVICE_API_KEY = 'a-secret-key-between-worker-and-inference'; // 后端 API Key
+    
+    // ** 必须与您的后端服务器配置完全匹配 **
     // 示例 (本地, mkcert - 必须用 localhost!):
-    // const API_ENDPOINT = 'https://localhost:8181/upload';
+    // const INFERENCE_SERVICE_URL = 'https://localhost:8181/v1/infer';
     // 示例 (服务器, Let's Encrypt):
-    // const API_ENDPOINT = 'https://myagent.mydomain.com:8181/upload';
+    // const INFERENCE_SERVICE_URL = 'https://myagent.mydomain.com:8181/v1/infer';
     // 示例 (HTTP, 不推荐):
-    // const API_ENDPOINT = 'http://localhost:8181/upload'; // 或 http://特定IP:端口
-
-    const API_ENDPOINT = '在此粘贴你的后端URL/upload'; // <-- 编辑此行
+    // const INFERENCE_SERVICE_URL = 'http://localhost:8181/v1/infer'; // 或 http://特定IP:端口
     ```
-3.  **非常重要:** 将 `API_ENDPOINT` 的值设置为与您的后端服务器运行地址**完全匹配**：
+3.  **非常重要:** 
+    *   将 `INFERENCE_SERVICE_URL` 的值设置为与您的后端服务器运行地址**完全匹配**：
+    *   将 `INFERENCE_SERVICE_API_KEY` 的值设置为与您在 `.env` 文件中设置的 `INFERENCE_SERVICE_API_KEY` **完全一致**
     *   如果 `SERVER_ENABLE_SSL=true`，使用 `https://`。
     *   如果 `SERVER_ENABLE_SSL=false`，使用 `http://` (注意浏览器限制)。
     *   **如果在本地使用 `mkcert`，您必须使用 `https://localhost:PORT`**。不要使用 `127.0.0.1`，因为浏览器处理 `localhost` 的证书方式不同，且更可靠。
     *   如果在服务器上使用 `Certbot`/Let's Encrypt，使用 `https://yourdomain.com:PORT`。
     *   确保 `PORT` 与 `.env` 中的 `SERVER_PORT` 匹配。
-    *   路径 `/upload` 通常应保持不变，除非您修改了 `server.py`。
+    *   API 路径现在是 `/v1/infer`，不再是 `/upload`。
 4.  保存脚本。
 
 ### 使用方法
@@ -265,22 +272,27 @@ python server.py
 #### 监控
 
 *   **浏览器控制台 (F12):** 查找 `AI Agent:` 日志 (前端)。检查网络错误 (CORS, Mixed Content - 混合内容, Failed fetch - 获取失败)。
-*   **后端终端:** 来自 `server.py` 的详细日志 (请求、STT、LLM、错误)。
+*   **后端终端:** 来自 `src/app.py` 的详细日志 (请求、STT、LLM、错误)。
 
 ### 故障排除
 
 *   **面板不出现:** 用户脚本是否启用？页面 URL 是否正确？控制台 (F12) 是否有错误？
 *   **“开始”按钮禁用:** 打开“总控开关”。等待视频检测（查看控制台）。
 *   **启动/运行时代理出错 (网络/连接问题):**
-    *   **最常见:** 检查浏览器控制台 (F12) 的网络错误：`Failed to fetch` (获取失败), `TypeError: NetworkError` (类型错误：网络错误), `Mixed Content` (混合内容), `CORS policy` (CORS 策略)。
-    *   **验证 `API_ENDPOINT`:** 再次/三次检查用户脚本中的 `API_ENDPOINT` 是否与**确切**的后端地址匹配 (`https://` vs `http://`, 域名/IP/localhost, 端口)。**关键是：如果在本地使用 `mkcert`，请确保您使用的是 `https://localhost:PORT` 而不是 `https://127.0.0.1:PORT`**。
+    *   **最常见:** 检查浏览器控制台 (F12) 的网络错误：`Failed to fetch` (获取失败), `TypeError: NetworkError` (类型错误：网络错误), `Mixed Content` (混合内容), `CORS policy` (CORS 策略), `401 Unauthorized` (未授权 - API 密钥不匹配)。
+    *   **验证 API 配置:** 
+        *   再次/三次检查用户脚本中的 `INFERENCE_SERVICE_URL` 是否与**确切**的后端地址匹配 (`https://` vs `http://`, 域名/IP/localhost, 端口)。
+        *   检查 `INFERENCE_SERVICE_API_KEY` 是否与 `.env` 中的值**完全一致**。
+        *   **关键是：如果在本地使用 `mkcert`，请确保您使用的是 `https://localhost:PORT` 而不是 `https://127.0.0.1:PORT`**。
     *   **SSL 问题 (HTTPS):**
-        *   *本地 (mkcert):* `mkcert -install` 是否成功运行？`API_ENDPOINT` 是否正确设置为 `https://localhost:PORT`？如果 CA 不受信任或使用了错误的主机名，浏览器可能会显示证书警告。尝试在浏览器标签页中直接访问 `API_ENDPOINT` - 如果弹出安全例外提示，请接受（仅用于在 `localhost` 上进行本地测试）。
+        *   *本地 (mkcert):* `mkcert -install` 是否成功运行？`INFERENCE_SERVICE_URL` 是否正确设置为 `https://localhost:PORT/v1/infer`？如果 CA 不受信任或使用了错误的主机名，浏览器可能会显示证书警告。尝试在浏览器标签页中直接访问 `INFERENCE_SERVICE_URL` - 如果弹出安全例外提示，请接受（仅用于在 `localhost` 上进行本地测试）。
         *   *服务器 (Certbot):* 证书是否有效（未过期）？Python 进程是否能*读取*证书文件 (`/etc/letsencrypt/live/...`)？检查文件权限。Certbot 续订是否失败？服务器防火墙是否开放了 443 端口（或您自定义的 SSL 端口）？
-    *   **后端未运行:** `python server.py` 进程是否仍在终端中活动？那里是否有错误？
+    *   **后端未运行:** `python src/app.py` 进程是否仍在终端中活动？那里是否有错误？
     *   **防火墙:** 是否有防火墙（服务器或客户端）阻止了连接？
 *   **后端错误 (检查终端):**
-    *   **API 密钥:** `.env` 中 LLM 或有道的密钥无效/缺失。
+    *   **API 密钥:** 
+        *   `.env` 中 LLM 或有道的密钥无效/缺失。
+        *   `INFERENCE_SERVICE_API_KEY` 与前端脚本中的值不匹配（会出现 401 错误）。
     *   **有道 STT 错误:** App Key/Secret 不正确？超出配额？连接有道的网络问题？FFmpeg 转换失败？（检查 FFmpeg 错误）。
     *   **SSL 文件错误:** 后端找不到或无法读取 `.env` 中指定的证书/密钥。检查 `SSL_CERT_PATH`、`SSL_KEY_PATH` 和文件权限。
     *   **其他 Python 错误:** 阅读错误回溯信息 (traceback)。
