@@ -55,7 +55,7 @@
 #### 1. 获取代码
 
 ```bash
-git clone https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent.git
+git clone https://github.com/bOOOOcG/live-stream-chat-ai-agent.git
 # 或下载 ZIP 并解压
 ```
 

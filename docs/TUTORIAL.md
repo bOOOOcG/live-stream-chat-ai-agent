@@ -55,7 +55,7 @@ Before you begin, ensure you have the following:
 #### 1. Get the Code
 
 ```bash
-git clone https://github.com/bOOOOcG/Live_Stream_Chat_AI_Agent.git
+git clone https://github.com/bOOOOcG/live-stream-chat-ai-agent.git
 # OR download and extract ZIP
 ```
 
