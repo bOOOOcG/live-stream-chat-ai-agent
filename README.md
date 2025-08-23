@@ -1,8 +1,9 @@
 # Live Stream Chat AI Agent
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
+[![Discord](https://img.shields.io/discord/1334400729031467028?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/ndWj3xnCEZ)
 
-| **ENGLISH** | [ 中文 ](README.zh-CN.md) | [ Official Website ](https://lsca.enou.org/) |
+| **ENGLISH** | [ 中文 ](README.zh-CN.md) | [ Official Website ](https://lsca.enou.org/) | [ Discord Community ](https://discord.gg/ndWj3xnCEZ) |
 
 An AI-powered agent designed to watch live streams, understand the content (audio, chat, video), and participate in the chat automatically using a Large Language Model (LLM).
 

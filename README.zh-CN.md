@@ -1,8 +1,9 @@
 # Live Stream Chat AI Agent (直播聊天室 AI 智能代理)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
+[![Discord](https://img.shields.io/discord/1334400729031467028?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/ndWj3xnCEZ)
 
-| [ ENGLISH ](README.md) | **中文** | [ 官方网站 ](https://lsca.enou.org/) |
+| [ ENGLISH ](README.md) | **中文** | [ 官方网站 ](https://lsca.enou.org/) | [ Discord 社区 ](https://discord.gg/ndWj3xnCEZ) |
 
 一个由 AI 驱动的代理程序，设计用于观看直播、理解内容（音频、弹幕、画面），并使用大型语言模型 (LLM) 自动参与弹幕互动。
 
