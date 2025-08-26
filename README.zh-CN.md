@@ -93,6 +93,10 @@
 └── .gitignore             # Git 忽略规则
 ```
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=bOOOOcG/live-stream-chat-ai-agent&type=Date)](https://www.star-history.com/#bOOOOcG/live-stream-chat-ai-agent&Date)
+
 ## 贡献
 
 欢迎参与贡献！请参考[贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md) (待创建) 获取更多细节。

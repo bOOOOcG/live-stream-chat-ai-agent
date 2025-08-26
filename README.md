@@ -93,6 +93,10 @@ It consists of two main parts:
 └── .gitignore             # Git ignore rules
 ```
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=bOOOOcG/live-stream-chat-ai-agent&type=Date)](https://www.star-history.com/#bOOOOcG/live-stream-chat-ai-agent&Date)
+
 ## Contributing
 
 Contributions are welcome! Please refer to the [Contributing Guide](CONTRIBUTING.md) (to be created) for more details.
